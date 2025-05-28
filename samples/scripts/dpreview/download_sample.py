@@ -24,54 +24,94 @@ async def get_image(gallery_url, output_filepath):
             if gallery_url.startswith('https://www.dpreview.com'):
                 gallery_url = gallery_url.replace('https://www.', 'https://m.')
             
+            print(f"Opening gallery: {gallery_url}", file=sys.stderr)
             await page.goto(gallery_url, wait_until='domcontentloaded')
             
             # Wait for page to load
             await page.wait_for_timeout(3000)
             
-            # Try to wait for PhotoSwipe gallery image to appear
+            # Click on the first image div to open the viewer
             try:
-                await page.wait_for_selector('img.pswp__img', timeout=5000)
+                await page.wait_for_selector('div.image', timeout=5000)
+                await page.click('div.image')
+                await page.wait_for_timeout(2000)
             except:
-                # If PhotoSwipe doesn't load, continue with fallback
-                pass
+                print(f"Error: Could not find or click first image div", file=sys.stderr)
+                return False
             
-            # Find the first image with class pswp__img (PhotoSwipe gallery image)
-            # If not found, fall back to finding large images
-            image_url = await page.evaluate('''
+            # Extract all image URLs from the EXIF table
+            image_urls = await page.evaluate('''
                 () => {
-                    // First try to find PhotoSwipe gallery image
-                    const pswpImg = document.querySelector('img.pswp__img');
-                    if (pswpImg && pswpImg.src) {
-                        return pswpImg.src;
+                    const exifTable = document.querySelector('table.exif');
+                    if (!exifTable) {
+                        return null;
                     }
                     
-                    // Fallback: find all images
-                    const images = Array.from(document.querySelectorAll('img'));
+                    // Find the "Original:" row
+                    const originalRow = Array.from(exifTable.querySelectorAll('tr.item')).find(row => {
+                        const label = row.querySelector('td.label');
+                        return label && label.textContent.trim() === 'Original:';
+                    });
                     
-                    // Filter for large images that are likely gallery images
-                    for (const img of images) {
-                        // Skip if image is not loaded
-                        if (!img.complete || !img.src) continue;
+                    if (!originalRow) {
+                        return null;
+                    }
+                    
+                    const links = originalRow.querySelectorAll('a[href]');
+                    const files = [];
+                    
+                    links.forEach(link => {
+                        const href = link.href;
+                        const text = link.textContent.trim();
                         
-                        // Get computed dimensions
-                        const rect = img.getBoundingClientRect();
-                        const width = rect.width;
-                        const height = rect.height;
+                        // Extract file extension from URL or text
+                        let extension = '';
+                        if (href.includes('.jpg')) extension = 'jpg';
+                        else if (href.includes('.jpeg')) extension = 'jpeg';  
+                        else if (href.includes('.png')) extension = 'png';
+                        else if (href.includes('.cr3')) extension = 'cr3';
+                        else if (href.includes('.nef')) extension = 'nef';
+                        else if (href.includes('.arw')) extension = 'arw';
+                        else if (href.includes('.dng')) extension = 'dng';
+                        else if (text.toLowerCase().includes('jpeg')) extension = 'jpeg';
+                        else if (text.toLowerCase().includes('png')) extension = 'png';
+                        else if (text.toLowerCase().includes('raw')) extension = 'raw';
                         
-                        // Look for reasonably sized images (not thumbnails)
-                        if (width >= 400 && height >= 300) {
-                            return img.src;
+                        if (extension) {
+                            files.push({
+                                url: href,
+                                extension: extension,
+                                text: text,
+                                isRaw: ['cr3', 'nef', 'arw', 'dng', 'raw'].includes(extension)
+                            });
                         }
-                    }
+                    });
                     
-                    return null;
+                    return files;
                 }
             ''')
             
-            if not image_url:
-                print(f"Error: No suitable gallery image found", file=sys.stderr)
+            if not image_urls or len(image_urls) == 0:
+                print(f"Error: No image URLs found in EXIF table", file=sys.stderr)
                 return False
+            
+            # Priority order: PNG > JPEG > RAW formats
+            def get_priority(file_info):
+                if file_info['extension'] == 'png':
+                    return 1
+                elif file_info['extension'] in ['jpg', 'jpeg']:
+                    return 2
+                elif file_info['isRaw']:
+                    return 3
+                else:
+                    return 4
+            
+            # Sort by priority and pick the best one
+            best_file = min(image_urls, key=get_priority)
+            image_url = best_file['url']
+            file_type = best_file['extension'].upper()
+            
+            print(f"Downloading {file_type} image from: {image_url}", file=sys.stderr)
                 
             # Download using page context to maintain session
             response = await page.context.request.get(image_url)
@@ -93,11 +133,11 @@ async def get_image(gallery_url, output_filepath):
 
 async def main():
     if len(sys.argv) != 3:
-        print("Usage: download_sample.py <gallery_url> <output_file>", file=sys.stderr)
+        print("Usage: download_sample.py <output_file> <gallery_url>", file=sys.stderr)
         sys.exit(1)
     
-    gallery_url = sys.argv[1]
-    output_file = sys.argv[2]
+    output_file = sys.argv[1]
+    gallery_url = sys.argv[2]
     
     success = await get_image(gallery_url, output_file)
     sys.exit(0 if success else 1)

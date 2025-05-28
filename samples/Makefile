@@ -3,61 +3,67 @@ CACHE_DIR = .cache
 DATA_DIR = data
 JPG_DIR = $(DATA_DIR)/jpg
 
-# Define all image sources
-DPREVIEW_GALLERIES = $(CACHE_DIR)/dpreview.com.galleries.tsv
-DPREVIEW_SELECTED = $(CACHE_DIR)/dpreview.com.selected.tsv
-DPREVIEW_IMAGES = $(shell [ -f $(DPREVIEW_SELECTED) ] && cut -f3 $(DPREVIEW_SELECTED) | sed 's,^,$(JPG_DIR)/,')
+# List of downloaders (add new ones here)
+DOWNLOADERS = dpreview
 
-# All images from all sources
-ALL_IMAGES = $(DPREVIEW_IMAGES)
-ALL_EXIF = $(ALL_IMAGES:.jpg=.exif)
+# Generate downloader command files
+DOWNLOADER_COMMANDS = $(addprefix $(CACHE_DIR)/,$(addsuffix .commands,$(DOWNLOADERS)))
 
 .PHONY: all init configure clean clean-all
 
-# Default target
-all: $(ALL_IMAGES)
+# Default target - downloads all images
+all: $(CACHE_DIR)/.downloaded
+
+# Main download marker file - depends on all commands being executed
+$(CACHE_DIR)/.downloaded: $(CACHE_DIR)/commands scripts/run.sh
+	@echo "Executing all download commands..."
+	@cat $(CACHE_DIR)/commands | scripts/run.sh
+	@touch $@
+
+# Concatenate all downloader command files
+$(CACHE_DIR)/commands: $(DOWNLOADER_COMMANDS)
+	@echo "Combining command files..."
+	@cat $^ > $@
+	@echo "Total commands: $$(wc -l < $@)"
+
+# DPReview command generation
+$(CACHE_DIR)/dpreview.commands: $(CACHE_DIR)/dpreview.galleries.tsv scripts/dpreview/get_camera_names.sh | $(CACHE_DIR)
+	@total=$$(wc -l < $<); \
+	echo "Generating dpreview download commands for $$total galleries..."; \
+	count=0; \
+	> $@.tmp; \
+	while read -r line; do \
+		url=$$(echo "$$line" | cut -f1); \
+		title=$$(echo "$$line" | cut -f2); \
+		camera=$$(echo "$$title" | scripts/dpreview/get_camera_names.sh); \
+		echo ". ./.venv/bin/activate && python3 ./scripts/dpreview/download_sample.py $(JPG_DIR)/$$camera.jpg $$url" >> $@.tmp; \
+		count=$$((count + 1)); \
+		echo "[$$count/$$total]: $$camera"; \
+	done < $< && mv $@.tmp $@
+	@echo "Generated $$(wc -l < $@) dpreview commands"
+
+# Fetch gallery list from dpreview
+$(CACHE_DIR)/dpreview.galleries.tsv: scripts/dpreview/get_gallery_list.py .venv/bin/activate | $(CACHE_DIR)
+	. .venv/bin/activate && python3 $< > $@.tmp && mv $@.tmp $@
 
 # Run configuration check
 configure:
 	./configure
 
-# Initialize virtual environment and install dependencies
-init: configure
-	python3 -m venv .venv
-	. .venv/bin/activate && python3 -m pip install playwright==1.41.0
-	. .venv/bin/activate && playwright install chromium
+# Create virtual environment
+.venv/bin/activate: scripts/venv.sh
+	./scripts/venv.sh
+
+# Initialize virtual environment and install dependencies  
+init: configure .venv/bin/activate
 
 # Ensure directories exist
 $(CACHE_DIR) $(JPG_DIR):
 	mkdir -p $@
 
-# Fetch gallery list from dpreview
-$(DPREVIEW_GALLERIES): scripts/dpreview/get_gallery_list.py | $(CACHE_DIR)
-	. .venv/bin/activate && python3 $< > $@
-
-# Create selected galleries (25 random)
-$(DPREVIEW_SELECTED): $(DPREVIEW_GALLERIES)
-	shuf $< | head -25 | while IFS=$$'\t' read -r url title; do \
-		camera=$$(echo "$$title" | scripts/dpreview/get_camera_names.sh); \
-		echo "jpg\t$$url\t$$camera.jpg"; \
-	done > $@
-	@echo "Selected 25 random galleries from dpreview"
-
-# Pattern rule for downloading images
-$(JPG_DIR)/%.jpg: | $(JPG_DIR)
-	@mkdir -p $$(dirname $@)
-	@url=$$(grep -F "$*.jpg" $(DPREVIEW_SELECTED) | cut -f2); \
-	if [ -n "$$url" ]; then \
-		echo "Downloading $* from $$url"; \
-		. .venv/bin/activate && python3 scripts/dpreview/download_sample.py "$$url" "$@"; \
-	fi
-
 # Pattern rule for extracting EXIF data
 %.exif: %.jpg
 	exiftool -j $< > $@
-
-# Target to extract all EXIF data
-exif: $(ALL_EXIF)
 
 # Clean up generated files (preserve .gitignore files)
 clean:
@@ -70,6 +76,7 @@ clean-all: clean
 	rm -rf .venv
 
 # Convenience targets
-dpreview-list: $(DPREVIEW_GALLERIES)
-dpreview-select: $(DPREVIEW_SELECTED)
-dpreview: $(DPREVIEW_IMAGES)
+dpreview-list: $(CACHE_DIR)/dpreview.galleries.tsv
+dpreview-commands: 
+	rm -f $(CACHE_DIR)/dpreview.commands
+	$(MAKE) $(CACHE_DIR)/dpreview.commands

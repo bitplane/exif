@@ -8,7 +8,7 @@ async def fetch_all_galleries():
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=True,
+            headless=False,  # Show browser so we can see what's happening
             args=['--disable-blink-features=AutomationControlled']
         )
         
@@ -21,43 +21,38 @@ async def fetch_all_galleries():
         
         await page.goto('https://m.dpreview.com/sample-galleries?category=all&sort=chronologically', wait_until='domcontentloaded')
         
-        # Wait for the gallery list to load
-        await page.wait_for_selector('.articleList', timeout=30000)
+        # Try to dismiss GDPR popup if present
+        try:
+            # Look for common GDPR popup dismiss buttons
+            await page.wait_for_selector('[data-testid="accept-all"], .accept-all, .gdpr-accept, .cookie-accept', timeout=3000)
+            await page.click('[data-testid="accept-all"], .accept-all, .gdpr-accept, .cookie-accept')
+            await page.wait_for_timeout(1000)
+        except:
+            # No popup or couldn't find dismiss button, continue
+            pass
         
-        # Keep scrolling to load all galleries (lazy loading)
-        last_count = 0
-        while True:
-            # Get current gallery count
-            gallery_elements = await page.query_selector_all('.articleList article')
-            current_count = len(gallery_elements)
-            
-            # If no new galleries loaded, we're done
-            if current_count == last_count:
-                break
-            
-            last_count = current_count
-            
-            # Scroll to bottom to trigger lazy loading
-            await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-            
-            # Wait a bit for new content to load
-            await page.wait_for_timeout(2000)
+        # Wait for the gallery table to load
+        await page.wait_for_selector('tr.gallery', timeout=10000)
         
-        # Extract all gallery links and titles
+        # Extract gallery rows from the table
         galleries = await page.evaluate('''
             () => {
-                const articles = document.querySelectorAll('.articleList article');
-                return Array.from(articles).map(article => {
-                    const link = article.querySelector('a');
-                    const title = article.querySelector('h4');
-                    if (link && title) {
-                        return {
-                            url: link.href,
-                            title: title.textContent.trim()
-                        };
+                const rows = document.querySelectorAll('tr.gallery');
+                if (rows.length === 0) {
+                    throw new Error('No tr.gallery elements found on page');
+                }
+                
+                return Array.from(rows).map(row => {
+                    const link = row.querySelector('td.title a');
+                    if (!link) {
+                        throw new Error('No link found in gallery row');
                     }
-                    return null;
-                }).filter(item => item !== null);
+                    
+                    return {
+                        url: link.href,
+                        title: link.textContent.trim()
+                    };
+                });
             }
         ''')
         
@@ -66,11 +61,25 @@ async def fetch_all_galleries():
     return galleries
 
 async def main():
-    galleries = await fetch_all_galleries()
-    
-    # Output in TSV format: url<tab>title
-    for gallery in galleries:
-        print(f"{gallery['url']}\t{gallery['title']}")
+    try:
+        galleries = await fetch_all_galleries()
+        
+        if not galleries:
+            print("Error: No galleries found", file=sys.stderr)
+            return 1
+        
+        # Output in TSV format: url<tab>title
+        for gallery in galleries:
+            print(f"{gallery['url']}\t{gallery['title']}")
+        
+        print(f"Found {len(galleries)} galleries", file=sys.stderr)
+        return 0
+        
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+    exit_code = asyncio.run(main())
+    sys.exit(exit_code)

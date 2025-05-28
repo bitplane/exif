@@ -4,30 +4,50 @@
 read -r title
 
 # Extract manufacturer
-manufacturer=$(echo -n "You are a camera manufacturer extractor. Extract ONLY the camera manufacturer/brand name from: $title
-Use the full brand name.
-Examples: Canon, Nikon, Sony, Olympus, Fujifilm, Panasonic, Kodak, Casio, Samsung
-Note: 'Fuji' should be 'Fujifilm'
-Output only the manufacturer name:" | ollama run llama3 | head -1 | xargs)
+manufacturer=$(echo -n "Extract the camera manufacturer from this title: $title
+
+Rules:
+- Output ONLY the manufacturer name, nothing else
+- Use proper capitalization: Canon, Nikon, Sony, Olympus, Fujifilm, Panasonic, etc.
+- For 'Fuji' use 'Fujifilm'
+- For phone brands like 'OnePlus' keep as is
+- If no clear manufacturer, output 'Unknown'
+
+Output:" | ollama run llama3 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
 
 # Extract model
-model=$(echo -n "You are a camera model extractor. Extract ONLY the camera model name from: $title
-Do NOT include the manufacturer name in the model.
-Replace spaces with hyphens.
-Replace asterisks (*) with hyphens.
-Examples: 
-- 'Nikon D850' -> 'D850'
+model=$(echo -n "Extract the camera model from this title: $title
+
+Rules:
+- Output ONLY the model name/number, nothing else
+- Do NOT include the manufacturer name
+- Replace spaces with hyphens
+- Replace special characters like * with hyphens
+- If unclear, use the most specific part after the manufacturer
+
+Examples:
 - 'Canon EOS 5D' -> 'EOS-5D'
-- 'Sony DSC-HX200V' -> 'DSC-HX200V'
-- 'Olympus PEN-F' -> 'PEN-F'
-- 'Pentax *ist D' -> '-ist-D'
-Output only the model:" | ollama run llama3 | head -1 | xargs)
+- 'Sony a6500' -> 'a6500'
+- 'OnePlus 5' -> '5'
+
+Output:" | ollama run llama3 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
+
+# Validate and clean up
+if [[ -z "$manufacturer" || "$manufacturer" == *"extracted"* || "$manufacturer" == *":"* ]]; then
+    manufacturer="Unknown"
+fi
+
+if [[ -z "$model" || "$model" == *"extracted"* || "$model" == *":"* || "$model" == *"->"* ]]; then
+    model="Model"
+fi
 
 # Combine them
 camera_info="${manufacturer}/${model}"
 
-# Replace any asterisks with hyphens in the final result
+# Replace any problematic characters
 camera_info="${camera_info//\*/-}"
+camera_info="${camera_info// /-}"
+camera_info="${camera_info//->/-}"
 
 # Output the result
 echo "$camera_info"

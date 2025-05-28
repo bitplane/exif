@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+
+# Generated files (handled by directory .gitignore files)
+.cache/*
+data/*
+
+# Keep directory structure
+!.cache/.gitignore
+!data/.gitignore

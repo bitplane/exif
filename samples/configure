@@ -29,6 +29,17 @@ else
     echo "✓ python3 pip found: $(python3 -m pip --version)"
 fi
 
+# Check PHP
+if ! command -v php >/dev/null 2>&1; then
+    echo "❌ php not found"
+    echo "  Install with: apt-get install php-cli (Debian/Ubuntu)"
+    echo "  or: dnf install php-cli (Fedora)"
+    echo "  or: brew install php (macOS)"
+    exit 1
+else
+    echo "✓ php found: $(php -v | head -n1)"
+fi
+
 # Check exiftool
 if ! command -v exiftool >/dev/null 2>&1; then
     echo "❌ exiftool not found"

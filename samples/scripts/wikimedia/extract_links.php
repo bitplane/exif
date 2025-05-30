@@ -18,12 +18,51 @@ $field_blacklist = [
 // Map field names to numeric IDs
 $field_to_id = [];
 $field_count = []; // Track how many times each field appears
+$make_model_count = []; // Track Make/Model combinations
+$software_count = []; // Track Software values
 $next_id = 0;
 $skipped_long_fields = 0;
 $skipped_blacklisted = 0;
 
 // Open debug file for keys
 $debug = fopen('debug_keys.txt', 'w');
+
+// Function to print summary
+function print_summary() {
+    global $count, $skipped_ext, $empty_count, $skipped_blacklisted, $skipped_long_fields;
+    global $seen, $min_count, $field_to_id, $software_count;
+    
+    // Count how many met the threshold
+    $output_count = 0;
+    foreach ($seen as $data) {
+        if ($data['count'] >= $min_count) $output_count++;
+    }
+    
+    fwrite(STDERR, "\n\nSUMMARY:\n");
+    fwrite(STDERR, "Total records: $count\n");
+    fwrite(STDERR, "Skipped (wrong extension): $skipped_ext\n");
+    fwrite(STDERR, "Empty metadata: $empty_count\n");
+    fwrite(STDERR, "Skipped blacklisted fields: $skipped_blacklisted\n");
+    fwrite(STDERR, "Skipped long field names: $skipped_long_fields\n");
+    fwrite(STDERR, "Unique EXIF producers: " . count($seen) . "\n");
+    fwrite(STDERR, "Producers with >= $min_count examples: $output_count\n");
+    fwrite(STDERR, "Total unique field names seen: " . count($field_to_id) . "\n");
+    
+    // Sort Software by popularity
+    arsort($software_count);
+    fwrite(STDERR, "\nTop 100 Software values by popularity:\n");
+    $i = 0;
+    foreach ($software_count as $software => $software_count_val) {
+        fwrite(STDERR, sprintf("%4d. %-50s %d\n", ++$i, $software, $software_count_val));
+        if ($i >= 100) break;
+    }
+}
+
+// Register signal handler for Ctrl+C
+pcntl_signal(SIGINT, function($signo) {
+    print_summary();
+    exit(0);
+});
 
 while ($line = fgets(STDIN)) {
     if (strpos($line, 'INSERT INTO `image` VALUES') !== 0) continue;
@@ -39,7 +78,7 @@ while ($line = fgets(STDIN)) {
         // Quick regex to extract just filename and metadata fields
         if (!preg_match("/^'([^']*)',[^,]*,[^,]*,[^,]*,'([^'\\\\]*(?:\\\\.[^'\\\\]*)*)'/", $record, $match)) continue;
         
-        $filename = $match[1];
+        $filename = stripslashes($match[1]);
         $metadata = $match[2];
         
         // Check extension
@@ -54,15 +93,19 @@ while ($line = fgets(STDIN)) {
         $field_ids = [];
         $keys = null;
         
+        $exif_data = null;
+        
         // Try JSON first
         if ($metadata[0] === '{') {
             $data = @json_decode($metadata, true);
             if ($data && isset($data['data'])) {
                 // If exif field exists, use only that
                 if (isset($data['data']['exif']) && is_array($data['data']['exif'])) {
-                    $keys = array_keys($data['data']['exif']);
+                    $exif_data = $data['data']['exif'];
+                    $keys = array_keys($exif_data);
                 } else {
-                    $keys = array_keys($data['data']);
+                    $exif_data = $data['data'];
+                    $keys = array_keys($exif_data);
                 }
             }
         } 
@@ -72,10 +115,68 @@ while ($line = fgets(STDIN)) {
             if ($data && is_array($data)) {
                 // If exif field exists, use only that
                 if (isset($data['exif']) && is_array($data['exif'])) {
-                    $keys = array_keys($data['exif']);
+                    $exif_data = $data['exif'];
+                    $keys = array_keys($exif_data);
                 } else {
-                    $keys = array_keys($data);
+                    $exif_data = $data;
+                    $keys = array_keys($exif_data);
                 }
+            }
+        }
+        
+        // Track Make/Model combinations and determine EXIF producer key
+        $exif_producer_key = '';
+        
+        if ($exif_data) {
+            $make = isset($exif_data['Make']) ? $exif_data['Make'] : '';
+            $model = isset($exif_data['Model']) ? $exif_data['Model'] : '';
+            
+            if ($make || $model) {
+                $make_model = trim($make . ' / ' . $model);
+                if (!isset($make_model_count[$make_model])) {
+                    $make_model_count[$make_model] = 0;
+                }
+                $make_model_count[$make_model]++;
+            }
+            
+            // Track Software
+            if (isset($exif_data['Software']) && $exif_data['Software']) {
+                $software = is_array($exif_data['Software']) ? 
+                    json_encode($exif_data['Software']) : 
+                    (string)$exif_data['Software'];
+                if (!isset($software_count[$software])) {
+                    $software_count[$software] = 0;
+                }
+                $software_count[$software]++;
+            }
+            
+            // Determine EXIF producer key with hierarchy
+            // 1) Software tag first (plus other software markers)
+            $software_tags = [];
+            if (isset($exif_data['Software']) && $exif_data['Software']) {
+                $software_tags[] = is_array($exif_data['Software']) ? 
+                    json_encode($exif_data['Software']) : 
+                    (string)$exif_data['Software'];
+            }
+            // Add other software-related tags
+            foreach (['ProcessingSoftware', 'HostComputer', 'Artist'] as $tag) {
+                if (isset($exif_data[$tag]) && $exif_data[$tag]) {
+                    $software_tags[] = is_array($exif_data[$tag]) ? 
+                        json_encode($exif_data[$tag]) : 
+                        (string)$exif_data[$tag];
+                }
+            }
+            
+            if ($software_tags) {
+                $exif_producer_key = 'SOFTWARE:' . implode('|', $software_tags);
+            }
+            // 2) Make/Model pair if no software
+            elseif ($make || $model) {
+                $exif_producer_key = 'CAMERA:' . trim($make . '/' . $model);
+            }
+            // 3) All tag names if neither
+            else {
+                $exif_producer_key = 'TAGS:' . implode('', $keys);
             }
         }
         
@@ -103,62 +204,45 @@ while ($line = fgets(STDIN)) {
             }
         }
         
-        if ($field_ids) {
-            // Sort for consistent hashing
-            sort($field_ids, SORT_NUMERIC);
-            
-            // Create hash from sorted array
-            // PHP doesn't have array_hash, so we use serialize
-            $hash = md5(serialize($field_ids));
+        if ($field_ids || $exif_producer_key) {
+            // Use EXIF producer key as the primary identifier
+            $hash = $exif_producer_key ? md5($exif_producer_key) : md5(serialize($field_ids));
             
             if (!isset($seen[$hash])) {
-                $seen[$hash] = ['count' => 0, 'filename' => $filename, 'field_ids' => $field_ids];
+                $seen[$hash] = ['count' => 0, 'filename' => $filename, 'producer_key' => $exif_producer_key, 'field_ids' => $field_ids];
             }
             $seen[$hash]['count']++;
             
             // Output URL when we hit minimum count
             if ($seen[$hash]['count'] == $min_count) {
-                echo "https://commons.wikimedia.org/wiki/File:" . $seen[$hash]['filename'] . "\n";
+                echo "https://commons.wikimedia.org/wiki/File:" . urlencode($seen[$hash]['filename']) . "\n";
                 
-                // Write field names to debug file
-                $field_names = [];
-                foreach ($seen[$hash]['field_ids'] as $id) {
-                    $field_names[] = array_search($id, $field_to_id);
+                // Write producer key or field names to debug file
+                if ($seen[$hash]['producer_key']) {
+                    fwrite($debug, $seen[$hash]['producer_key'] . "\n");
+                } else {
+                    $field_names = [];
+                    foreach ($seen[$hash]['field_ids'] as $id) {
+                        $field_names[] = array_search($id, $field_to_id);
+                    }
+                    fwrite($debug, 'TAGS:' . implode(', ', $field_names) . "\n");
                 }
-                fwrite($debug, implode(', ', $field_names) . "\n");
             }
         } else {
             $empty_count++;
         }
         
         if ($count % 50000 == 0) {
-            fwrite(STDERR, "Processed: $count | Unique: " . count($seen) . " | Unique fields: " . count($field_to_id) . "\n");
+            fwrite(STDERR, "Processed: $count | Unique producers: " . count($seen) . " | Unique field names: " . count($field_to_id) . "\n");
         }
+        
+        // Handle signals
+        pcntl_signal_dispatch();
     }
 }
 
-// Count how many met the threshold
-$output_count = 0;
-foreach ($seen as $data) {
-    if ($data['count'] >= $min_count) $output_count++;
-}
-
-fwrite(STDERR, "\nTotal records: $count\n");
-fwrite(STDERR, "Skipped (wrong extension): $skipped_ext\n");
-fwrite(STDERR, "Empty metadata: $empty_count\n");
-fwrite(STDERR, "Skipped blacklisted fields: $skipped_blacklisted\n");
-fwrite(STDERR, "Skipped long field names: $skipped_long_fields\n");
-fwrite(STDERR, "Unique field combinations: " . count($seen) . "\n");
-fwrite(STDERR, "Combinations with >= $min_count examples: $output_count\n");
-fwrite(STDERR, "Total unique field names seen: " . count($field_to_id) . "\n");
-
-// Sort fields by popularity
-arsort($field_count);
-fwrite(STDERR, "\nAll EXIF fields by popularity:\n");
-$i = 0;
-foreach ($field_count as $field => $count) {
-    fwrite(STDERR, sprintf("%4d. %-40s %d\n", ++$i, $field, $count));
-}
+// Print final summary
+print_summary();
 
 fclose($debug);
 ?>

@@ -23,14 +23,67 @@ $software_count = []; // Track Software values
 $next_id = 0;
 $skipped_long_fields = 0;
 $skipped_blacklisted = 0;
+$error_count = 0;
 
 // Open debug file for keys
 $debug = fopen('debug_keys.txt', 'w');
 
+// Function to write stats files
+function write_stats_files() {
+    global $make_model_count, $software_count;
+    
+    // Count individual makes and models
+    $make_count = [];
+    $model_count = [];
+    
+    foreach ($make_model_count as $make_model => $count) {
+        $parts = explode(' / ', $make_model);
+        $make = trim($parts[0]);
+        $model = isset($parts[1]) ? trim($parts[1]) : '';
+        
+        if ($make) {
+            if (!isset($make_count[$make])) $make_count[$make] = 0;
+            $make_count[$make] += $count;
+        }
+        
+        if ($model) {
+            if (!isset($model_count[$model])) $model_count[$model] = 0;
+            $model_count[$model] += $count;
+        }
+    }
+    
+    // Sort and write makes
+    arsort($make_count);
+    $make_output = '';
+    foreach ($make_count as $make => $count) {
+        $make_output .= "$count\t$make\n";
+    }
+    file_put_contents('makes.txt', $make_output);
+    
+    // Sort and write models
+    arsort($model_count);
+    $model_output = '';
+    foreach ($model_count as $model => $count) {
+        $model_output .= "$count\t$model\n";
+    }
+    file_put_contents('models.txt', $model_output);
+    
+    // Sort and write software
+    arsort($software_count);
+    $software_output = '';
+    foreach ($software_count as $software => $count) {
+        $software_output .= "$count\t$software\n";
+    }
+    file_put_contents('software.txt', $software_output);
+}
+
 // Function to print summary
 function print_summary() {
     global $count, $skipped_ext, $empty_count, $skipped_blacklisted, $skipped_long_fields;
-    global $seen, $min_count, $field_to_id, $software_count;
+    global $seen, $min_count, $field_to_id, $software_count, $error_count;
+    
+    // Write stats files
+    write_stats_files();
     
     // Count how many met the threshold
     $output_count = 0;
@@ -42,6 +95,7 @@ function print_summary() {
     fwrite(STDERR, "Total records: $count\n");
     fwrite(STDERR, "Skipped (wrong extension): $skipped_ext\n");
     fwrite(STDERR, "Empty metadata: $empty_count\n");
+    fwrite(STDERR, "Error cases found: $error_count\n");
     fwrite(STDERR, "Skipped blacklisted fields: $skipped_blacklisted\n");
     fwrite(STDERR, "Skipped long field names: $skipped_long_fields\n");
     fwrite(STDERR, "Unique EXIF producers: " . count($seen) . "\n");
@@ -56,6 +110,12 @@ function print_summary() {
         fwrite(STDERR, sprintf("%4d. %-50s %d\n", ++$i, $software, $software_count_val));
         if ($i >= 100) break;
     }
+    
+    // Write all unique field names to file for PII analysis
+    $field_list = array_keys($field_to_id);
+    sort($field_list);
+    file_put_contents('all_fields.txt', implode("\n", $field_list) . "\n");
+    fwrite(STDERR, "\nWrote " . count($field_list) . " unique field names to all_fields.txt\n");
 }
 
 // Register signal handler for Ctrl+C
@@ -95,10 +155,17 @@ while ($line = fgets(STDIN)) {
         
         $exif_data = null;
         
+        $has_error = false;
+        
         // Try JSON first
-        if ($metadata[0] === '{') {
+        if ($metadata && $metadata[0] === '{') {
             $data = @json_decode($metadata, true);
             if ($data && isset($data['data'])) {
+                // Check for errors
+                if (isset($data['data']['_error']) || isset($data['data']['errors'])) {
+                    $has_error = true;
+                }
+                
                 // If exif field exists, use only that
                 if (isset($data['data']['exif']) && is_array($data['data']['exif'])) {
                     $exif_data = $data['data']['exif'];
@@ -110,9 +177,14 @@ while ($line = fgets(STDIN)) {
             }
         } 
         // Try PHP serialized
-        elseif ($metadata[0] === 'a') {
+        elseif ($metadata && $metadata[0] === 'a') {
             $data = @unserialize($metadata);
             if ($data && is_array($data)) {
+                // Check for errors
+                if (isset($data['_error']) || isset($data['errors'])) {
+                    $has_error = true;
+                }
+                
                 // If exif field exists, use only that
                 if (isset($data['exif']) && is_array($data['exif'])) {
                     $exif_data = $data['exif'];
@@ -158,25 +230,51 @@ while ($line = fgets(STDIN)) {
                     json_encode($exif_data['Software']) : 
                     (string)$exif_data['Software'];
             }
-            // Add other software-related tags
-            foreach (['ProcessingSoftware', 'HostComputer', 'Artist'] as $tag) {
-                if (isset($exif_data[$tag]) && $exif_data[$tag]) {
-                    $software_tags[] = is_array($exif_data[$tag]) ? 
-                        json_encode($exif_data[$tag]) : 
-                        (string)$exif_data[$tag];
-                }
+            // Add other software-related tags (only actual software, no PII)
+            if (isset($exif_data['ProcessingSoftware']) && $exif_data['ProcessingSoftware']) {
+                $software_tags[] = is_array($exif_data['ProcessingSoftware']) ? 
+                    json_encode($exif_data['ProcessingSoftware']) : 
+                    (string)$exif_data['ProcessingSoftware'];
             }
             
-            if ($software_tags) {
-                $exif_producer_key = 'SOFTWARE:' . implode('|', $software_tags);
+            // Create safe filenames for organization
+            $file_ext = pathinfo($filename, PATHINFO_EXTENSION);
+            
+            // Handle error cases specially
+            if ($has_error) {
+                $error_count++;
+                $file_base = pathinfo($filename, PATHINFO_FILENAME);
+                $safe_base = preg_replace('/[^a-zA-Z0-9._-]/', '_', $file_base);
+                $safe_base = substr($safe_base, 0, 100); // Limit length
+                $exif_producer_key = "errors/$safe_base.error.$error_count.$file_ext";
+            }
+            elseif ($software_tags) {
+                // Make software name filesystem-safe
+                $safe_software = preg_replace('/[^a-zA-Z0-9._-]/', '_', implode('_', $software_tags));
+                $safe_software = substr($safe_software, 0, 100); // Limit length
+                $exif_producer_key = "software/$safe_software.$file_ext";
             }
             // 2) Make/Model pair if no software
             elseif ($make || $model) {
-                $exif_producer_key = 'CAMERA:' . trim($make . '/' . $model);
+                $safe_make_model = preg_replace('/[^a-zA-Z0-9._-]/', '_', trim($make . '_' . $model));
+                $safe_make_model = substr($safe_make_model, 0, 100); // Limit length
+                $exif_producer_key = "make/$safe_make_model.$file_ext";
             }
             // 3) All tag names if neither
             else {
-                $exif_producer_key = 'TAGS:' . implode('', $keys);
+                // Filter out blacklisted tags from the key
+                $filtered_keys = [];
+                foreach ($keys as $key) {
+                    if (!isset($field_blacklist[$key])) {
+                        $filtered_keys[] = $key;
+                    }
+                }
+                $tag_list = implode('.', $filtered_keys);
+                $safe_tags = preg_replace('/[^a-zA-Z0-9._-]/', '_', $tag_list);
+                if (strlen($safe_tags) > 64) {
+                    $safe_tags = substr($safe_tags, 0, 64) . '_' . md5($tag_list);
+                }
+                $exif_producer_key = "tags/$safe_tags.$file_ext";
             }
         }
         
@@ -205,17 +303,22 @@ while ($line = fgets(STDIN)) {
         }
         
         if ($field_ids || $exif_producer_key) {
-            // Use EXIF producer key as the primary identifier
-            $hash = $exif_producer_key ? md5($exif_producer_key) : md5(serialize($field_ids));
+            // Use the full producer key as the identifier (no hashing needed now)
+            $hash = $exif_producer_key ? $exif_producer_key : 'tags/unknown_' . md5(serialize($field_ids));
             
             if (!isset($seen[$hash])) {
                 $seen[$hash] = ['count' => 0, 'filename' => $filename, 'producer_key' => $exif_producer_key, 'field_ids' => $field_ids];
             }
             $seen[$hash]['count']++;
             
-            // Output URL when we hit minimum count
-            if ($seen[$hash]['count'] == $min_count) {
-                echo "https://commons.wikimedia.org/wiki/File:" . urlencode($seen[$hash]['filename']) . "\n";
+            // Output URL at powers of 2 for unbiased sampling (or always for errors)
+            $count_val = $seen[$hash]['count'];
+            $is_error = strpos($hash, 'errors/') === 0;
+            
+            if ($is_error || ($count_val > 0 && ($count_val & ($count_val - 1)) == 0)) {
+                // Use 9999999 as count for error files
+                $output_count = $is_error ? 9999999 : $count_val;
+                echo "$hash\t$output_count\thttps://commons.wikimedia.org/wiki/File:" . urlencode($seen[$hash]['filename']) . "\n";
                 
                 // Write producer key or field names to debug file
                 if ($seen[$hash]['producer_key']) {

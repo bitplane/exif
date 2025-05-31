@@ -1,5 +1,14 @@
 #!/bin/bash
 
+# Model to use for extraction
+MODEL="llama3.2:3b"
+
+# Ensure the model is downloaded
+if ! ollama list | grep -q "^$MODEL"; then
+    echo "Downloading $MODEL..." >&2
+    ollama pull "$MODEL" >&2
+fi
+
 # Read gallery URL and title from stdin (tab-separated), output Manufacturer/Model format
 read -r input
 url=""
@@ -29,7 +38,7 @@ Rules:
 - If URL contains manufacturer name, use it as a hint
 - Only output UNKNOWN if you really can't determine the manufacturer
 
-Output:" | ollama run llama3 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
+Output:" | ollama run "$MODEL" 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
 
 # Extract model
 model=$(echo -n "Extract the camera model from this gallery.
@@ -50,7 +59,7 @@ Examples:
 - 'OnePlus 5' -> '5'
 - 'Nikon Z 9' -> 'Z_9'
 
-Output:" | ollama run llama3 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
+Output:" | ollama run "$MODEL" 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
 
 # Validate and clean up
 if [[ -z "$manufacturer" || "$manufacturer" == *"extracted"* || "$manufacturer" == *":"* || "$manufacturer" == "UNKNOWN" ]]; then

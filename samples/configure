@@ -34,12 +34,6 @@ if ! command -v ollama >/dev/null 2>&1; then
     echo "❌ ollama not found"
     echo "  Install from: https://ollama.ai"
     exit 1
-else
-    echo "✓ ollama found"
-    if ! ollama list | grep -q "llama3"; then
-        echo "  ⚠️  llama3 model not found. Run: ollama pull llama3"
-        exit 1
-    fi
 fi
 
 echo

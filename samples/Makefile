@@ -45,7 +45,7 @@ $(CACHE_DIR)/dpreview.params: $(CACHE_DIR)/dpreview.galleries scripts/dpreview/g
 	@echo "Generated $$(wc -l < $@) dpreview params"
 
 # Fetch gallery list from dpreview
-$(CACHE_DIR)/dpreview.galleries: scripts/dpreview/get_gallery_list.py $(CACHE_DIR)/.venv-installed $(CACHE_DIR)/.dpreview.llama3-installed | $(CACHE_DIR)
+$(CACHE_DIR)/dpreview.galleries: scripts/dpreview/get_gallery_list.py $(CACHE_DIR)/.venv-installed | $(CACHE_DIR)
 	. .venv/bin/activate && python3 $< > $@.tmp && mv $@.tmp $@
 
 # Run configuration check
@@ -61,13 +61,8 @@ $(CACHE_DIR)/.venv-installed: .venv/bin/activate requirements.txt | $(CACHE_DIR)
 	. .venv/bin/activate && pip install -r requirements.txt
 	@touch $@
 
-# Install llama3 model for DPReview
-$(CACHE_DIR)/.dpreview.llama3-installed: | $(CACHE_DIR)
-	ollama pull llama3
-	@touch $@
-
 # Initialize virtual environment and install dependencies  
-init: configure .venv/bin/activate $(CACHE_DIR)/.venv-installed $(CACHE_DIR)/.dpreview.llama3-installed ## Initialize environment and install dependencies
+init: configure .venv/bin/activate $(CACHE_DIR)/.venv-installed ## Initialize environment and install dependencies
 
 # Ensure directories exist
 $(CACHE_DIR) $(DATA_DIR):

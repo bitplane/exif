@@ -8,7 +8,7 @@ async def fetch_all_galleries():
     
     async with async_playwright() as p:
         browser = await p.chromium.launch(
-            headless=False,  # Show browser so we can see what's happening
+            headless=True,  # Run in headless mode
             args=['--disable-blink-features=AutomationControlled']
         )
         

@@ -35,10 +35,12 @@ $(CACHE_DIR)/dpreview.params: $(CACHE_DIR)/dpreview.galleries scripts/dpreview/g
 	while read -r line; do \
 		url=$$(echo "$$line" | cut -f1); \
 		title=$$(echo "$$line" | cut -f2); \
-		camera=$$(echo "$$title" | scripts/dpreview/get_camera_names.sh); \
-		echo "device/$$camera.jpg $$url" >> $@.tmp; \
-		count=$$((count + 1)); \
-		echo "[$$count/$$total]: $$camera"; \
+		result=$$(echo "$$line" | scripts/dpreview/get_camera_names.sh); \
+		if [ -n "$$result" ]; then \
+			echo "$$result" >> $@.tmp; \
+			count=$$((count + 1)); \
+			echo "[$$count/$$total]: $$result"; \
+		fi; \
 	done < $< && mv $@.tmp $@
 	@echo "Generated $$(wc -l < $@) dpreview params"
 

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 
 # Create virtual environment and install dependencies
 python3 -m venv .venv

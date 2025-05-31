@@ -63,11 +63,10 @@ def main():
     
     downloaders = sys.argv[1:]
     
-    # Use OrderedDict to maintain order while deduplicating
-    # First occurrence wins (based on command line order)
+    # Use OrderedDict to maintain order while collecting all sources per target
     targets = OrderedDict()
     
-    # Process in order - first one wins
+    # Collect all sources for each normalized target
     for downloader in downloaders:
         params_file = f".cache/{downloader}.params"
         rules = parse_params_file(params_file, downloader)
@@ -77,25 +76,66 @@ def main():
             path = target[5:] if target.startswith("data/") else target
             norm_key = normalize_path(source, path)
             
-            # First occurrence wins
+            # Collect all sources for this target
             if norm_key not in targets:
-                targets[norm_key] = (target, command, source)
+                targets[norm_key] = []
+            targets[norm_key].append((target, command, source))
     
     # Generate makefile
     print("# Generated Makefile from params files")
     print(f"# Sources: {', '.join(downloaders)} (in priority order)")
     print()
     
-    # Output rules in order of first occurrence
-    for norm_key, (target, command, source) in targets.items():
-        # Escape special characters in Make
+    # Collect directory dependencies
+    dir_deps = {}
+    
+    # Output rules with all sources grouped by target
+    for norm_key, sources in targets.items():
+        # Use the first target path (they should all be equivalent after normalization)
+        target = sources[0][0]
         escaped_target = target.replace('$', '$$')
+        
+        # Track directory dependencies
+        parent_dir = os.path.dirname(target)
+        if parent_dir and parent_dir != 'data':
+            if parent_dir not in dir_deps:
+                dir_deps[parent_dir] = []
+            dir_deps[parent_dir].append(target)
         
         print(f"{escaped_target}:")
         print(f"\t@mkdir -p $(dir $@)")
-        print(f"\t{command}")
-        print(f"# Source: {source}")
+        
+        if len(sources) == 1:
+            # Single source - simple rule
+            _, command, source = sources[0]
+            print(f"\t{command}")
+            print(f"# Source: {source}")
+        else:
+            # Multiple sources - try in order until one succeeds
+            print(f"# Sources: {', '.join(s[2] for s in sources)}")
+            for i, (_, command, source) in enumerate(sources):
+                if i < len(sources) - 1:
+                    print(f"\t{command} || \\")
+                else:
+                    print(f"\t{command}")
+        
         print()
+    
+    # Output directory targets
+    print("# Directory targets")
+    if dir_deps:
+        # Make all directories phony targets
+        phony_dirs = ' '.join(d.replace('$', '$$') for d in sorted(dir_deps.keys()))
+        print(f".PHONY: {phony_dirs}")
+        print()
+        
+        for directory in sorted(dir_deps.keys()):
+            escaped_dir = directory.replace('$', '$$')
+            deps = ' '.join(dep.replace('$', '$$') for dep in sorted(dir_deps[directory]))
+            
+            print(f"{escaped_dir}: {deps}")
+            print(f"\t@echo \"Downloaded {len(dir_deps[directory])} files to {directory}\"")
+            print()
 
 if __name__ == '__main__':
     main()

@@ -1,7 +1,6 @@
 # Configuration
 CACHE_DIR = .cache
 DATA_DIR = data
-DATA_DIRS = $(DATA_DIR)/device $(DATA_DIR)/software $(DATA_DIR)/tags $(DATA_DIR)/errors
 
 # List of downloaders (add new ones here)
 DOWNLOADERS = dpreview wikimedia
@@ -69,7 +68,7 @@ $(CACHE_DIR)/.dpreview.llama3-installed: | $(CACHE_DIR)
 init: configure .venv/bin/activate $(CACHE_DIR)/.venv-installed $(CACHE_DIR)/.dpreview.llama3-installed ## Initialize environment and install dependencies
 
 # Ensure directories exist
-$(CACHE_DIR) $(DATA_DIRS):
+$(CACHE_DIR) $(DATA_DIR):
 	mkdir -p $@
 
 # Pattern rule for extracting EXIF data

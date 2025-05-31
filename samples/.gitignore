@@ -5,7 +5,14 @@ __pycache__/
 # Generated files (handled by directory .gitignore files)
 .cache/*
 data/*
+*.gz
+*.xz
+*.tar
 
 # Keep directory structure
 !.cache/.gitignore
 !data/.gitignore
+
+# Keep exif files and errors generating them
+!*.exif
+!*.exif.errors

@@ -9,12 +9,9 @@ if [ $# -ne 2 ]; then
     exit 1
 fi
 
-FILENAME="$1"
+FILENAME="data/$1"
 URL="$2"
 TMPFILE="${FILENAME}.tmp"
-
-# Create directory structure if needed
-mkdir -p "$(dirname "$FILENAME")"
 
 echo "Downloading: $FILENAME" >&2
 

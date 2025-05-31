@@ -17,8 +17,7 @@ echo "Sorting links from: $INPUT" >&2
 echo "Output to: $OUTPUT" >&2
 
 # Reverse, get unique by first field, sort by count
-# tail -r works on both macOS and most Unix systems
-tail -r "$INPUT" | \
+tac "$INPUT" | \
     sort -k1,1 -u | \
     sort -k2,2 -nr | \
     awk -F'\t' '{
@@ -32,7 +31,7 @@ tail -r "$INPUT" | \
             index(filename, "device/") == 1 ||
             (index(filename, "software/") == 1 && count >= 128) ||
             (index(filename, "tags/") == 1 && count >= 128)) {
-            print "./scripts/wikimedia/download.sh " filename " " url
+            print "./scripts/wikimedia/download.sh data/" filename " " url
         }
     }' > "$TMPFILE"
 

@@ -1,14 +1,14 @@
 #!/bin/sh
-
 echo "Checking required tools..."
 
-# Check Python
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "❌ python3 not found"
-    exit 1
-else
-    echo "✓ python3 found: $(python3 --version)"
-fi
+for cmd in shuf grep head exiftool php tac; do
+    if ! command -v $cmd >/dev/null 2>&1; then
+        echo "❌ $cmd not found"
+        exit 1
+    else
+        echo "✓ $cmd found"
+    fi
+done
 
 # Check Python venv module
 if ! python3 -m venv --help >/dev/null 2>&1; then
@@ -29,28 +29,6 @@ else
     echo "✓ python3 pip found: $(python3 -m pip --version)"
 fi
 
-# Check PHP
-if ! command -v php >/dev/null 2>&1; then
-    echo "❌ php not found"
-    echo "  Install with: apt-get install php-cli (Debian/Ubuntu)"
-    echo "  or: dnf install php-cli (Fedora)"
-    echo "  or: brew install php (macOS)"
-    exit 1
-else
-    echo "✓ php found: $(php -v | head -n1)"
-fi
-
-# Check exiftool
-if ! command -v exiftool >/dev/null 2>&1; then
-    echo "❌ exiftool not found"
-    echo "  Install with: apt-get install libimage-exiftool-perl (Debian/Ubuntu)"
-    echo "  or: dnf install perl-Image-ExifTool (Fedora)"
-    echo "  or: brew install exiftool (macOS)"
-    exit 1
-else
-    echo "✓ exiftool found: $(exiftool -ver)"
-fi
-
 # Check ollama
 if ! command -v ollama >/dev/null 2>&1; then
     echo "❌ ollama not found"
@@ -58,21 +36,11 @@ if ! command -v ollama >/dev/null 2>&1; then
     exit 1
 else
     echo "✓ ollama found"
-    # Check if llama3 is installed
     if ! ollama list | grep -q "llama3"; then
         echo "  ⚠️  llama3 model not found. Run: ollama pull llama3"
+        exit 1
     fi
 fi
 
-# Check other utilities
-for cmd in shuf grep head; do
-    if ! command -v $cmd >/dev/null 2>&1; then
-        echo "❌ $cmd not found"
-        exit 1
-    else
-        echo "✓ $cmd found"
-    fi
-done
-
 echo
-echo "All required tools found! You can run 'make init' to set up the environment."
+echo "All required tools found! Try 'make help' or 'make' to start collecting."

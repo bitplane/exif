@@ -4,7 +4,7 @@ DATA_DIR = data
 JPG_DIR = $(DATA_DIR)/jpg
 
 # List of downloaders (add new ones here)
-DOWNLOADERS = dpreview
+DOWNLOADERS = dpreview wikimedia
 
 # Generate downloader command files
 DOWNLOADER_COMMANDS = $(addprefix $(CACHE_DIR)/,$(addsuffix .commands,$(DOWNLOADERS)))
@@ -74,6 +74,16 @@ clean:
 # Clean everything including virtual environment
 clean-all: clean
 	rm -rf .venv
+
+# Wikimedia Commons samples
+$(CACHE_DIR)/wikimedia.url: scripts/wikimedia/get_url.sh | $(CACHE_DIR)
+	./scripts/wikimedia/get_url.sh $@
+
+$(CACHE_DIR)/wikimedia.links: $(CACHE_DIR)/wikimedia.url scripts/wikimedia/download_and_extract.sh scripts/wikimedia/extract_links.php
+	./scripts/wikimedia/download_and_extract.sh $$(cat $<) $@
+
+$(CACHE_DIR)/wikimedia.commands: $(CACHE_DIR)/wikimedia.links scripts/wikimedia/create_commands.sh
+	./scripts/wikimedia/create_commands.sh $< $@
 
 # Convenience targets
 dpreview-list: $(CACHE_DIR)/dpreview.galleries.tsv

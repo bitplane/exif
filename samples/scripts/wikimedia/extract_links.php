@@ -125,7 +125,7 @@ function print_summary() {
 // Register signal handler for Ctrl+C
 pcntl_signal(SIGINT, function($signo) {
     print_summary();
-    exit(0);
+    exit(1);  // Exit with error code
 });
 
 while ($line = fgets(STDIN)) {

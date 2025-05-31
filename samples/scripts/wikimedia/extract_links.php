@@ -25,8 +25,6 @@ $skipped_long_fields = 0;
 $skipped_blacklisted = 0;
 $error_count = 0;
 
-// Open debug file for keys
-$debug = fopen('debug_keys.txt', 'w');
 
 // Function to create safe filesystem names
 function make_safe_filename($str, $max_length = 100) {
@@ -97,62 +95,12 @@ function create_tags_key($keys, $field_blacklist) {
     return "tags/$safe_tags";
 }
 
-// Function to write stats files
-function write_stats_files() {
-    global $make_model_count, $software_count;
-    
-    // Count individual makes and models
-    $make_count = [];
-    $model_count = [];
-    
-    foreach ($make_model_count as $make_model => $count) {
-        $parts = explode(' / ', $make_model);
-        $make = trim($parts[0]);
-        $model = isset($parts[1]) ? trim($parts[1]) : '';
-        
-        if ($make) {
-            if (!isset($make_count[$make])) $make_count[$make] = 0;
-            $make_count[$make] += $count;
-        }
-        
-        if ($model) {
-            if (!isset($model_count[$model])) $model_count[$model] = 0;
-            $model_count[$model] += $count;
-        }
-    }
-    
-    // Sort and write makes
-    arsort($make_count);
-    $make_output = '';
-    foreach ($make_count as $make => $count) {
-        $make_output .= "$count\t$make\n";
-    }
-    file_put_contents('makes.txt', $make_output);
-    
-    // Sort and write models
-    arsort($model_count);
-    $model_output = '';
-    foreach ($model_count as $model => $count) {
-        $model_output .= "$count\t$model\n";
-    }
-    file_put_contents('models.txt', $model_output);
-    
-    // Sort and write software
-    arsort($software_count);
-    $software_output = '';
-    foreach ($software_count as $software => $count) {
-        $software_output .= "$count\t$software\n";
-    }
-    file_put_contents('software.txt', $software_output);
-}
 
 // Function to print summary
 function print_summary() {
     global $count, $skipped_ext, $empty_count, $skipped_blacklisted, $skipped_long_fields;
     global $seen, $min_count, $field_to_id, $software_count, $error_count;
     
-    // Write stats files
-    write_stats_files();
     
     // Count how many met the threshold
     $output_count = 0;
@@ -171,20 +119,7 @@ function print_summary() {
     fwrite(STDERR, "Producers with >= $min_count examples: $output_count\n");
     fwrite(STDERR, "Total unique field names seen: " . count($field_to_id) . "\n");
     
-    // Sort Software by popularity
-    arsort($software_count);
-    fwrite(STDERR, "\nTop 100 Software values by popularity:\n");
-    $i = 0;
-    foreach ($software_count as $software => $software_count_val) {
-        fwrite(STDERR, sprintf("%4d. %-50s %d\n", ++$i, $software, $software_count_val));
-        if ($i >= 100) break;
-    }
     
-    // Write all unique field names to file for PII analysis
-    $field_list = array_keys($field_to_id);
-    sort($field_list);
-    file_put_contents('all_fields.txt', implode("\n", $field_list) . "\n");
-    fwrite(STDERR, "\nWrote " . count($field_list) . " unique field names to all_fields.txt\n");
 }
 
 // Register signal handler for Ctrl+C
@@ -375,16 +310,6 @@ while ($line = fgets(STDIN)) {
                 
                 echo "$hash\t$output_count\thttps://upload.wikimedia.org/wikipedia/commons/$dir1/$dir2/" . urlencode($seen[$hash]['filename']) . "\n";
                 
-                // Write producer key or field names to debug file
-                if ($seen[$hash]['producer_key']) {
-                    fwrite($debug, $seen[$hash]['producer_key'] . "\n");
-                } else {
-                    $field_names = [];
-                    foreach ($seen[$hash]['field_ids'] as $id) {
-                        $field_names[] = array_search($id, $field_to_id);
-                    }
-                    fwrite($debug, 'TAGS:' . implode(', ', $field_names) . "\n");
-                }
             }
         } else {
             $empty_count++;
@@ -402,5 +327,4 @@ while ($line = fgets(STDIN)) {
 // Print final summary
 print_summary();
 
-fclose($debug);
 ?>

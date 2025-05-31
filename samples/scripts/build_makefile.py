@@ -7,7 +7,20 @@ Order is determined by command line argument order
 
 import sys
 import os
+import re
+import json
+import argparse
 from collections import OrderedDict
+
+# Load filters on startup
+FILTERS = []
+FILTERS_FILE = os.path.join(os.path.dirname(__file__), 'filters.json')
+if os.path.exists(FILTERS_FILE):
+    try:
+        with open(FILTERS_FILE, 'r') as f:
+            FILTERS = json.load(f)
+    except Exception:
+        FILTERS = []
 
 def normalize_device(path):
     parts = path.split('/', 3)
@@ -27,14 +40,27 @@ def normalize_device(path):
         return ""
 
     # fully numeric things aren't devices, they can go away
+    if make.replace('_', '').isdigit():
+        return ""
 
+    # fully punctuation ones can too
+    if not re.sub(r'[^\w]', '', model):
+        return ""
 
     return f"device/{make}/{model}.{ext}"
 
 def normalize_path(source_name, path):
     """
     Normalize a path for deduplication.
-    """
+    """ 
+    
+    # Check filters first
+    for filter_pattern in FILTERS:
+        try:
+            if re.search(filter_pattern, path):
+                return ""  # Filtered out
+        except re.error:
+            pass  # Invalid regex, skip
     
     if path.startswith('device/'):
         path = normalize_device(path)
@@ -84,6 +110,10 @@ def generate_targets_dict(downloaders):
             path = target[5:] if target.startswith("data/") else target
             norm_key = normalize_path(source, path)
             
+            # Skip if filtered out (falsey)
+            if not norm_key:
+                continue
+            
             # Collect all sources for this target
             if norm_key not in targets:
                 targets[norm_key] = []
@@ -93,16 +123,31 @@ def generate_targets_dict(downloaders):
     return targets
 
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: build_makefile.py <downloader1> [downloader2] ...", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description='Generate Makefile rules from params files')
+    parser.add_argument('downloaders', nargs='+', help='Downloader names (e.g. dpreview wikimedia)')
+    parser.add_argument('--dump', action='store_true', help='Dump JSON instead of Makefile')
     
-    downloaders = sys.argv[1:]
-    targets = generate_targets_dict(downloaders)
+    args = parser.parse_args()
+    
+    targets = generate_targets_dict(args.downloaders)
+    
+    if args.dump:
+        # JSON dump mode - convert to serializable format
+        dump_data = {}
+        for norm_key, sources in targets.items():
+            source_list = []
+            for target, command, source in sources:
+                source_list.append({
+                    'target': target,
+                    'source': source
+                })
+            dump_data[norm_key] = source_list
+        print(json.dumps(dump_data, indent=2))
+        return
     
     # Generate makefile
     print("# Generated Makefile from params files")
-    print(f"# Sources: {', '.join(downloaders)} (in priority order)")
+    print(f"# Sources: {', '.join(args.downloaders)} (in priority order)")
     print()
     
     # Collect directory dependencies

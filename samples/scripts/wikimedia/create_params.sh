@@ -1,6 +1,6 @@
 #!/bin/bash
-# Create download commands from extracted links
-# Usage: create_commands.sh <input_file> <output_file>
+# Create download params from extracted links
+# Usage: create_params.sh <input_file> <output_file>
 
 set -e
 
@@ -31,7 +31,7 @@ tac "$INPUT" | \
             index(filename, "device/") == 1 ||
             (index(filename, "software/") == 1 && count >= 128) ||
             (index(filename, "tags/") == 1 && count >= 128)) {
-            print "./scripts/wikimedia/download.sh data/" filename " " url
+            print filename " " url
         }
     }' > "$TMPFILE"
 

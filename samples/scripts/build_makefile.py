@@ -9,23 +9,18 @@ import sys
 import os
 from collections import OrderedDict
 
+def normalize_device(path):
+    return path
+
+
 def normalize_path(source_name, path):
     """
     Normalize a path for deduplication.
-    This function will evolve as we learn more about the data.
-    
-    Args:
-        source_name: The name of the source (e.g., 'dpreview', 'wikimedia')
-        path: The file path (e.g., 'device/Canon-EOS-R5.jpg')
-    
-    Returns:
-        Normalized path for comparison
     """
-    # For now, just lowercase normalization
-    # We can add more sophisticated logic as we analyze the data:
-    # - Handle different naming conventions (spaces, dashes, underscores)
-    # - Extract camera model from different path structures
-    # - Handle manufacturer name variations
+    
+    if path.startswith('device/'):
+        return normalize_device(path)
+    
     return path.lower()
 
 def parse_params_file(params_file, source_name):
@@ -56,13 +51,8 @@ def parse_params_file(params_file, source_name):
     
     return rules
 
-def main():
-    if len(sys.argv) < 2:
-        print("Usage: build_makefile.py <downloader1> [downloader2] ...", file=sys.stderr)
-        sys.exit(1)
-    
-    downloaders = sys.argv[1:]
-    
+def generate_targets_dict(downloaders):
+    """Generate the targets dictionary from downloaders list"""
     # Use OrderedDict to maintain order while collecting all sources per target
     targets = OrderedDict()
     
@@ -79,7 +69,18 @@ def main():
             # Collect all sources for this target
             if norm_key not in targets:
                 targets[norm_key] = []
+
             targets[norm_key].append((target, command, source))
+    
+    return targets
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: build_makefile.py <downloader1> [downloader2] ...", file=sys.stderr)
+        sys.exit(1)
+    
+    downloaders = sys.argv[1:]
+    targets = generate_targets_dict(downloaders)
     
     # Generate makefile
     print("# Generated Makefile from params files")

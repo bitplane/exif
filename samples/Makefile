@@ -8,16 +8,21 @@ DOWNLOADERS = dpreview wikimedia
 # Combined makefile from all sources
 COMBINED_MK = $(CACHE_DIR)/combined.mk
 
-.PHONY: all init configure clean clean-cache clean-data clean-venv backup help
+# Define all phony targets
+PHONY_TARGETS = all init configure clean clean-cache clean-data clean-venv backup help sources
+
+.PHONY: $(PHONY_TARGETS)
+
+# Only include generated makefiles if not running a phony target
+ifneq ($(filter $(MAKECMDGOALS),$(PHONY_TARGETS)),$(MAKECMDGOALS))
+-include $(COMBINED_MK)
+endif
 
 # Default target - downloads all images
 all: sources ## Generate all source makefiles
 
 help: ## Show this help
 	@egrep -h '\s##\s' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
-
-# Include combined makefile
--include $(COMBINED_MK)
 
 # Generate combined makefile
 sources: $(COMBINED_MK) ## Generate combined makefile from all sources

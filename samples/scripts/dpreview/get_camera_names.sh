@@ -23,6 +23,12 @@ else
     title="$input"
 fi
 
+# Only process URLs that contain "review"
+if [[ ! "$url" =~ review ]]; then
+    echo "  Skipping - not a review URL" >&2
+    exit 0
+fi
+
 echo "Processing: $title" >&2
 
 # Check if title suggests it's a lens before calling LLM

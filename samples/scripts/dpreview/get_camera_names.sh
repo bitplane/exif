@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Model to use for extraction
-MODEL="llama3.2:3b"
+MODEL="llama3"
 
 # Ensure the model is downloaded
 if ! ollama list | grep -q "^$MODEL"; then
@@ -23,67 +23,76 @@ else
     title="$input"
 fi
 
-# Extract manufacturer
-manufacturer=$(echo -n "Extract the camera manufacturer from this gallery.
-Title: $title
-URL: $url
+echo "Processing: $title" >&2
 
-Rules:
-- Output ONLY the manufacturer name, nothing else
-- NO special characters, NO punctuation, NO extra text
-- Use proper capitalization: Canon, Nikon, Sony, Olympus, Fujifilm, Panasonic, etc.
-- For 'Fuji' use 'Fujifilm'
-- For phone brands like 'OnePlus' keep as is
-- Look for common camera brands even if abbreviated (e.g. 'EOS' means Canon, 'Alpha' or 'a' series means Sony)
-- If URL contains manufacturer name, use it as a hint
-- Only output UNKNOWN if you really can't determine the manufacturer
-
-Output:" | ollama run "$MODEL" 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
-
-# Extract model
-model=$(echo -n "Extract the camera model from this gallery.
-Title: $title
-URL: $url
-
-Rules:
-- Output ONLY the model name/number, nothing else
-- NO special characters except underscores, NO punctuation, NO extra text
-- Do NOT include the manufacturer name
-- Replace spaces with underscores
-- Replace special characters with underscores
-- If unclear, output exactly: UNKNOWN
-
-Examples:
-- 'Canon EOS 5D' -> 'EOS_5D'
-- 'Sony a6500' -> 'a6500'
-- 'OnePlus 5' -> '5'
-- 'Nikon Z 9' -> 'Z_9'
-
-Output:" | ollama run "$MODEL" 2>/dev/null | grep -v "The extracted" | head -1 | xargs)
-
-# Validate and clean up
-if [[ -z "$manufacturer" || "$manufacturer" == *"extracted"* || "$manufacturer" == *":"* || "$manufacturer" == "UNKNOWN" ]]; then
-    manufacturer="UNKNOWN"
-fi
-
-if [[ -z "$model" || "$model" == *"extracted"* || "$model" == *":"* || "$model" == *"->"* || "$model" == "UNKNOWN" ]]; then
-    model="UNKNOWN"
-fi
-
-# Skip if both are unknown
-if [[ "$manufacturer" == "UNKNOWN" && "$model" == "UNKNOWN" ]]; then
-    # Don't output anything for unknown cameras
+# Check if title suggests it's a lens before calling LLM
+if [[ "$title" =~ [0-9]+mm || "$title" =~ [0-9]+-[0-9]+mm || "$title" =~ [Ff][0-9]\.[0-9] || "$title" =~ [Ff][0-9]-[0-9] ]]; then
+    echo "  Skipping - appears to be a lens gallery" >&2
     exit 0
 fi
 
-# Combine them
-camera_info="${manufacturer}/${model}"
+# Step 1: Determine device type
+device_type=$(echo -n "Gallery: $title
 
-# Replace any problematic characters
-camera_info="${camera_info//\*/}"
-camera_info="${camera_info// /_}"
-camera_info="${camera_info//-/_}"
-camera_info="${camera_info//[^a-zA-Z0-9\/_]/}"
+What type of device took these photos? Reply with ONLY one word:
+Camera, Phone, Tablet, Lens, Computer, Game, Unknown
+
+Answer:" | ollama run "$MODEL" 2>/dev/null | grep -v '^$' | tail -1 | xargs)
+
+echo "  Device type: $device_type" >&2
+
+# Only keep Camera, Phone, Tablet
+if [[ "$device_type" != "Camera" && "$device_type" != "Phone" && "$device_type" != "Tablet" ]]; then
+    echo "  Skipping - not a camera/phone/tablet" >&2
+    exit 0
+fi
+
+# Step 2: Extract manufacturer
+manufacturer=$(echo -n "Gallery of photos from a $device_type: $title
+
+What manufacturer made this $device_type? Reply with ONLY the brand name.
+Examples: Canon, Nikon, Sony, Fujifilm, Google, Apple, Samsung
+
+Answer:" | ollama run "$MODEL" 2>/dev/null | grep -v '^$' | tail -1 | xargs)
+
+echo "  Manufacturer: $manufacturer" >&2
+
+# Check if manufacturer is valid
+if [[ -z "$manufacturer" || "$manufacturer" == "Unknown" || "$manufacturer" == "UNKNOWN" || ${#manufacturer} -gt 20 ]]; then
+    echo "  Skipping - invalid manufacturer" >&2
+    exit 0
+fi
+
+# Step 3: Extract model
+model=$(echo -n "In this gallery of photos from a $device_type made by $manufacturer: $title
+
+What is the model name? Reply with ONLY the model (no manufacturer).
+Examples: EOS R5, iPhone 15, Pixel 8, X-T5, a7IV
+
+Answer:" | ollama run "$MODEL" 2>/dev/null | grep -v '^$' | tail -1 | xargs)
+
+echo "  Model: $model" >&2
+
+# Check if model is valid
+if [[ -z "$model" || "$model" == "Unknown" || "$model" == "UNKNOWN" || ${#model} -gt 30 ]]; then
+    echo "  Skipping - invalid model" >&2
+    exit 0
+fi
+
+# Check if model contains lens patterns (mm, F/, f/)
+if [[ "$model" =~ mm || "$model" =~ [Ff][0-9] || "$model" =~ -[0-9]+-[0-9]+ ]]; then
+    echo "  Skipping - appears to be a lens: $model" >&2
+    exit 0
+fi
+
+# Clean up - make path safe
+manufacturer="${manufacturer// /_}"
+manufacturer="${manufacturer//\//_}"
+manufacturer="${manufacturer//[^a-zA-Z0-9_-]/}"
+
+model="${model// /_}"
+model="${model//\//_}"
+model="${model//[^a-zA-Z0-9_-]/}"
 
 # Output the full params line
-echo "device/$camera_info.jpg $url"
+echo "device/$manufacturer/$model.jpg $url"

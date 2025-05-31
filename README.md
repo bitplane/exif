@@ -24,5 +24,3 @@
 ## more links
 
 * [loc.gov](https://www.loc.gov/preservation/digital/formats/fdd/fdd000618.shtml)
-* [dpreview sample galleries](https://m.dpreview.com/sample-galleries)
-* [dpreview sample galleries (desktop)](https://www.dpreview.com/sample-galleries)

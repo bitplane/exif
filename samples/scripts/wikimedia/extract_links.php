@@ -28,6 +28,75 @@ $error_count = 0;
 // Open debug file for keys
 $debug = fopen('debug_keys.txt', 'w');
 
+// Function to create safe filesystem names
+function make_safe_filename($str, $max_length = 100) {
+    // Replace unsafe chars with underscore
+    $safe = preg_replace('/[^a-zA-Z0-9._-]/', '_', $str);
+    // Remove multiple underscores
+    $safe = preg_replace('/_+/', '_', $safe);
+    // Trim underscores and spaces
+    $safe = trim($safe, '_ ');
+    // Limit length
+    if (strlen($safe) > $max_length) {
+        $safe = substr($safe, 0, $max_length);
+    }
+    return $safe;
+}
+
+// Function to create error key
+function create_error_key($filename, $error_count) {
+    $file_base = pathinfo($filename, PATHINFO_FILENAME);
+    $safe_base = make_safe_filename($file_base);
+    return "errors/$safe_base.error.$error_count";
+}
+
+// Function to create software key
+function create_software_key($software_tags) {
+    $combined = implode(' ', $software_tags);
+    $safe_software = make_safe_filename($combined);
+    return "software/$safe_software";
+}
+
+// Function to create device key
+function create_device_key($make, $model) {
+    $safe_make = make_safe_filename($make, 50);
+    $safe_model = make_safe_filename($model, 50);
+    
+    if ($safe_make && $safe_model) {
+        return "device/$safe_make/$safe_model";
+    } elseif ($safe_make) {
+        return "device/$safe_make/unknown";
+    } elseif ($safe_model) {
+        return "device/unknown/$safe_model";
+    }
+    return "device/unknown/unknown";
+}
+
+// Function to create tags key
+function create_tags_key($keys, $field_blacklist) {
+    // Filter out blacklisted tags
+    $filtered_keys = [];
+    foreach ($keys as $key) {
+        if (!isset($field_blacklist[$key])) {
+            $filtered_keys[] = $key;
+        }
+    }
+    
+    if (empty($filtered_keys)) {
+        return "tags/empty";
+    }
+    
+    $tag_list = implode('.', $filtered_keys);
+    $safe_tags = make_safe_filename($tag_list);
+    
+    // If too long, truncate and add hash
+    if (strlen($safe_tags) > 64) {
+        $safe_tags = substr($safe_tags, 0, 64) . '_' . substr(md5($tag_list), 0, 8);
+    }
+    
+    return "tags/$safe_tags";
+}
+
 // Function to write stats files
 function write_stats_files() {
     global $make_model_count, $software_count;
@@ -230,52 +299,33 @@ while ($line = fgets(STDIN)) {
                     json_encode($exif_data['Software']) : 
                     (string)$exif_data['Software'];
             }
-            // Add other software-related tags (only actual software, no PII)
+            // Tags identifying the software that created the exif data
             if (isset($exif_data['ProcessingSoftware']) && $exif_data['ProcessingSoftware']) {
                 $software_tags[] = is_array($exif_data['ProcessingSoftware']) ? 
                     json_encode($exif_data['ProcessingSoftware']) : 
                     (string)$exif_data['ProcessingSoftware'];
             }
             
-            // Create safe filenames for organization
-            $file_ext = pathinfo($filename, PATHINFO_EXTENSION);
+            // Get file extension in lowercase
+            $file_ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
             
-            // Handle error cases specially
+            // Create appropriate key based on data type
             if ($has_error) {
                 $error_count++;
-                $file_base = pathinfo($filename, PATHINFO_FILENAME);
-                $safe_base = preg_replace('/[^a-zA-Z0-9._-]/', '_', $file_base);
-                $safe_base = substr($safe_base, 0, 100); // Limit length
-                $exif_producer_key = "errors/$safe_base.error.$error_count.$file_ext";
+                $exif_producer_key = create_error_key($filename, $error_count);
             }
             elseif ($software_tags) {
-                // Make software name filesystem-safe
-                $safe_software = preg_replace('/[^a-zA-Z0-9._-]/', '_', implode('_', $software_tags));
-                $safe_software = substr($safe_software, 0, 100); // Limit length
-                $exif_producer_key = "software/$safe_software.$file_ext";
+                $exif_producer_key = create_software_key($software_tags);
             }
-            // 2) Make/Model pair if no software
             elseif ($make || $model) {
-                $safe_make_model = preg_replace('/[^a-zA-Z0-9._-]/', '_', trim($make . '_' . $model));
-                $safe_make_model = substr($safe_make_model, 0, 100); // Limit length
-                $exif_producer_key = "make/$safe_make_model.$file_ext";
+                $exif_producer_key = create_device_key($make, $model);
             }
-            // 3) All tag names if neither
             else {
-                // Filter out blacklisted tags from the key
-                $filtered_keys = [];
-                foreach ($keys as $key) {
-                    if (!isset($field_blacklist[$key])) {
-                        $filtered_keys[] = $key;
-                    }
-                }
-                $tag_list = implode('.', $filtered_keys);
-                $safe_tags = preg_replace('/[^a-zA-Z0-9._-]/', '_', $tag_list);
-                if (strlen($safe_tags) > 64) {
-                    $safe_tags = substr($safe_tags, 0, 64) . '_' . md5($tag_list);
-                }
-                $exif_producer_key = "tags/$safe_tags.$file_ext";
+                $exif_producer_key = create_tags_key($keys, $field_blacklist);
             }
+            
+            // Add file extension
+            $exif_producer_key = "$exif_producer_key.$file_ext";
         }
         
         // Process keys if we got any
@@ -303,7 +353,7 @@ while ($line = fgets(STDIN)) {
         }
         
         if ($field_ids || $exif_producer_key) {
-            // Use the full producer key as the identifier (no hashing needed now)
+            // Use the full producer key as the identifier
             $hash = $exif_producer_key ? $exif_producer_key : 'tags/unknown_' . md5(serialize($field_ids));
             
             if (!isset($seen[$hash])) {
@@ -318,7 +368,12 @@ while ($line = fgets(STDIN)) {
             if ($is_error || ($count_val > 0 && ($count_val & ($count_val - 1)) == 0)) {
                 // Use 9999999 as count for error files
                 $output_count = $is_error ? 9999999 : $count_val;
-                echo "$hash\t$output_count\thttps://commons.wikimedia.org/wiki/File:" . urlencode($seen[$hash]['filename']) . "\n";
+                // Calculate MD5 of filename for upload path
+                $md5 = md5($seen[$hash]['filename']);
+                $dir1 = substr($md5, 0, 1);
+                $dir2 = substr($md5, 0, 2);
+                
+                echo "$hash\t$output_count\thttps://upload.wikimedia.org/wikipedia/commons/$dir1/$dir2/" . urlencode($seen[$hash]['filename']) . "\n";
                 
                 // Write producer key or field names to debug file
                 if ($seen[$hash]['producer_key']) {

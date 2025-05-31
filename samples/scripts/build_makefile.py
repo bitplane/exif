@@ -10,8 +10,26 @@ import os
 from collections import OrderedDict
 
 def normalize_device(path):
-    return path
+    parts = path.split('/', 3)
+    if len(parts) < 3:
+        return ""
+    
+    _, make, model = parts[:3]
 
+    if not make or not model:
+        return ""
+
+    ext = model.split('.')[-1]
+    model = model[:-len(ext)-1]
+    
+    # these seem to have people's names in them
+    if make.startswith('._'):
+        return ""
+
+    # fully numeric things aren't devices, they can go away
+
+
+    return f"device/{make}/{model}.{ext}"
 
 def normalize_path(source_name, path):
     """
@@ -19,9 +37,9 @@ def normalize_path(source_name, path):
     """
     
     if path.startswith('device/'):
-        return normalize_device(path)
+        path = normalize_device(path)
     
-    return path.lower()
+    return path
 
 def parse_params_file(params_file, source_name):
     """Parse a params file and return list of (target, command) tuples"""

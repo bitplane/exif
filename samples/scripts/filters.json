@@ -3,11 +3,17 @@
     "ignore": [
       "device/\\-\\-/unknown\\.jpg",
       "device/.*.JPG/unknown\\.jpg",
-      "device/???_Class_.*",
       "device/[\\-_\\-]+/.*",
       ".*/\\..*",
       "^device/2nd_",
-      "/[uU]nknown\\.jpg"
+      "/[uU]nknown\\.jpg",
+      "device/[0-9]+/",
+      "device/.*..._Class",
+      "device/.*[Rr]/?[Ee]/?[Ll]/?[Ee]/?[Aa]/?[Ss]/?[Ee]/?[Dd]?",
+      "tags/empty\\.jpg",
+      "device/Staff/",
+      "device/unknown/",
+      "device/.*Review"
     ],
     "replace": [
       [
@@ -17,6 +23,70 @@
       [
         "\\.\\.+",
         "."
+      ],
+      [
+        "device/BenQ_Corporation/",
+        "device/BenQ/"
+      ],
+      [
+        ".jpeg",
+        ".jpg"
+      ],
+      [
+        "device/ASUS",
+        "device/ASUS/"
+      ],
+      [
+        "//",
+        "/"
+      ],
+      [
+        "device/ALCATEL_ONETOUCH/",
+        "device/ALCATEL/ONETOUCH_"
+      ],
+      [
+        "device/Bengali_Image_Editor",
+        "software/Bengali_Image_Editor"
+      ],
+      [
+        "device/.*/Canon_",
+        "device/Canon/"
+      ],
+      [
+        "device/Apple_Inc\\./",
+        "device/Apple/"
+      ],
+      [
+        "device/CASIO_COMPUTER_CO\\._LTD\\./",
+        "device/CASIO/"
+      ],
+      [
+        "_www\\..*\\.com\\.",
+        "."
+      ],
+      [
+        "\\.tiff$",
+        ".tif"
+      ],
+      [
+        "device/ASUS/",
+        "device/Asus/"
+      ],
+      [
+        "device/BENQ/BENQ_",
+        "device/BenQ/"
+      ],
+      [
+        "device/SAMSUNG/",
+        "device/Samsung/"
+      ],
+      [
+        "device/samsung/",
+        "device/Samsung/"
+      ],
+      [
+        "device/SANYO_Electric_Co\\._Ltd\\./",
+        "device/SANYO/"
       ]
     ]
   }

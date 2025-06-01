@@ -13,59 +13,47 @@ import argparse
 from collections import OrderedDict
 
 # Load filters on startup
-FILTERS = []
+IGNORE_FILTERS = []
+REPLACE_FILTERS = []
 FILTERS_FILE = os.path.join(os.path.dirname(__file__), 'filters.json')
 if os.path.exists(FILTERS_FILE):
     try:
         with open(FILTERS_FILE, 'r') as f:
-            FILTERS = json.load(f)
+            filter_data = json.load(f)
+            IGNORE_FILTERS = filter_data.get("files", {}).get("ignore", [])
+            REPLACE_FILTERS = filter_data.get("files", {}).get("replace", [])
     except Exception:
-        FILTERS = []
-
-def normalize_device(path):
-    parts = path.split('/', 3)
-    if len(parts) < 3:
-        return ""
-    
-    _, make, model = parts[:3]
-
-    if not make or not model:
-        return ""
-
-    ext = model.split('.')[-1]
-    model = model[:-len(ext)-1]
-    
-    # these seem to have people's names in them
-    if make.startswith('._'):
-        return ""
-
-    # fully numeric things aren't devices, they can go away
-    if make.replace('_', '').isdigit():
-        return ""
-
-    # fully punctuation ones can too
-    if not re.sub(r'[^\w]', '', model):
-        return ""
-
-    return f"device/{make}/{model}.{ext}"
+        IGNORE_FILTERS = []
+        REPLACE_FILTERS = []
 
 def normalize_path(source_name, path):
     """
     Normalize a path for deduplication.
+    Returns (normalized_path, applied_filters) tuple
     """ 
+    applied_filters = []
+    current_path = path
     
-    # Check filters first
-    for filter_pattern in FILTERS:
+    # Apply replacements first (can cascade)
+    for find_pattern, replace_with in REPLACE_FILTERS:
         try:
-            if re.search(filter_pattern, path):
-                return ""  # Filtered out
+            new_path = re.sub(find_pattern, replace_with, current_path)
+            if new_path != current_path:
+                applied_filters.append(("replace", find_pattern, replace_with))
+                current_path = new_path
         except re.error:
             pass  # Invalid regex, skip
     
-    if path.startswith('device/'):
-        path = normalize_device(path)
+    # Then check ignore filters on the final result
+    for filter_pattern in IGNORE_FILTERS:
+        try:
+            if re.search(filter_pattern, current_path):
+                applied_filters.append(("ignore", filter_pattern))
+                return "", applied_filters  # Filtered out
+        except re.error:
+            pass  # Invalid regex, skip
     
-    return path
+    return current_path, applied_filters
 
 def parse_params_file(params_file, source_name):
     """Parse a params file and return list of (target, command) tuples"""
@@ -108,7 +96,7 @@ def generate_targets_dict(downloaders):
         for target, command, source in rules:
             # Extract the path part after "data/"
             path = target[5:] if target.startswith("data/") else target
-            norm_key = normalize_path(source, path)
+            norm_key, applied_filters = normalize_path(source, path)
             
             # Skip if filtered out (falsey)
             if not norm_key:
@@ -118,7 +106,7 @@ def generate_targets_dict(downloaders):
             if norm_key not in targets:
                 targets[norm_key] = []
 
-            targets[norm_key].append((target, command, source))
+            targets[norm_key].append((target, command, source, applied_filters))
     
     return targets
 
@@ -133,15 +121,22 @@ def main():
     
     if args.dump:
         # JSON dump mode - convert to serializable format
-        dump_data = {}
+        dump_data = {
+            'targets': {},
+            'filters': {
+                'ignore': IGNORE_FILTERS,
+                'replace': REPLACE_FILTERS
+            }
+        }
         for norm_key, sources in targets.items():
             source_list = []
-            for target, command, source in sources:
+            for target, command, source, applied_filters in sources:
                 source_list.append({
                     'target': target,
-                    'source': source
+                    'source': source,
+                    'applied_filters': applied_filters
                 })
-            dump_data[norm_key] = source_list
+            dump_data['targets'][norm_key] = source_list
         print(json.dumps(dump_data, indent=2))
         return
     
@@ -166,7 +161,7 @@ def main():
                 dir_deps[parent_dir] = []
             dir_deps[parent_dir].append(target)
         
-        print(f"{escaped_target}:")
+        print(f"{escaped_target}: scripts/filters.json")
         print(f"\t@mkdir -p $(dir $@)")
         
         if len(sources) == 1:

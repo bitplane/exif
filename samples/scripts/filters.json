@@ -1,3 +1,23 @@
-[
-  "device/\\-\\-/unknown\\.jpg"
-]
+{
+  "files": {
+    "ignore": [
+      "device/\\-\\-/unknown\\.jpg",
+      "device/.*.JPG/unknown\\.jpg",
+      "device/???_Class_.*",
+      "device/[\\-_\\-]+/.*",
+      ".*/\\..*",
+      "^device/2nd_",
+      "/[uU]nknown\\.jpg"
+    ],
+    "replace": [
+      [
+        "device/ASUS/ASUS_",
+        "device/ASUS"
+      ],
+      [
+        "\\.\\.+",
+        "."
+      ]
+    ]
+  }
+}

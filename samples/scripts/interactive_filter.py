@@ -31,6 +31,51 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 
 
+class FilesTable(DataTable):
+    """Files table with specific bindings"""
+    
+    BINDINGS = [
+        Binding("delete", "ignore_filter", "Ignore", show=True),
+        Binding("f2", "replace_filter", "Replace", show=True),
+    ]
+    
+    def action_ignore_filter(self):
+        self.app.action_ignore_filter()
+    
+    def action_replace_filter(self):
+        self.app.action_replace_filter()
+
+
+class IgnoreTable(DataTable):
+    """Ignore patterns table with specific bindings"""
+    
+    BINDINGS = [
+        Binding("delete", "delete_pattern", "Delete", show=True),
+        Binding("enter", "edit_pattern", "Edit", show=True),
+    ]
+    
+    def action_delete_pattern(self):
+        self.app.action_delete_ignore_pattern()
+    
+    def action_edit_pattern(self):
+        self.app.action_edit_ignore_pattern()
+
+
+class ReplaceTable(DataTable):
+    """Replace patterns table with specific bindings"""
+    
+    BINDINGS = [
+        Binding("delete", "delete_pattern", "Delete", show=True),
+        Binding("enter", "edit_pattern", "Edit", show=True),
+    ]
+    
+    def action_delete_pattern(self):
+        self.app.action_delete_replace_pattern()
+    
+    def action_edit_pattern(self):
+        self.app.action_edit_replace_pattern()
+
+
 class FilterEditModal(ModalScreen):
     """Modal dialog for editing filter patterns"""
 
@@ -70,6 +115,82 @@ class FilterEditModal(ModalScreen):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         self.dismiss(event.value)
+    
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+            event.prevent_default()
+
+
+class ReplaceEditModal(ModalScreen):
+    """Modal dialog for editing replace patterns"""
+
+    CSS = """
+    ReplaceEditModal {
+        align: center middle;
+    }
+    
+    ReplaceEditModal > Container {
+        width: 70;
+        height: 15;
+        border: thick $background;
+        background: $surface;
+    }
+    
+    ReplaceEditModal Label {
+        margin: 1 2;
+    }
+    
+    ReplaceEditModal Input {
+        margin: 0 2 1 2;
+    }
+    """
+
+    def __init__(self, find_pattern: str = "", replace_pattern: str = ""):
+        super().__init__()
+        self.find_pattern = find_pattern
+        self.replace_pattern = replace_pattern
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label("Replace Pattern")
+            yield Input(value=self.find_pattern, placeholder="Find regex pattern...", id="find_input")
+            yield Label("Replace With")
+            yield Input(value=self.replace_pattern, placeholder="Replacement text...", id="replace_input")
+
+    def on_mount(self) -> None:
+        self.query_one("#find_input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "find_input":
+            # Move to replace input
+            self.query_one("#replace_input", Input).focus()
+        else:
+            # Submit the form
+            find_val = self.query_one("#find_input", Input).value
+            replace_val = self.query_one("#replace_input", Input).value
+            self.dismiss((find_val, replace_val))
+    
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+            event.prevent_default()
+
+
+def save_filters(filter_data: dict) -> None:
+    """Save filter configuration to JSON file"""
+    temp_file = "./scripts/filters.json.tmp"
+    with open(temp_file, "w") as f:
+        json.dump(filter_data, f, indent=2)
+    os.rename(temp_file, "./scripts/filters.json")
+
+def load_filters() -> dict:
+    """Load filter configuration from JSON file"""
+    try:
+        with open("./scripts/filters.json", "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"files": {"ignore": [], "replace": []}}
 
 
 class FilterBrowser(App):
@@ -90,9 +211,8 @@ class FilterBrowser(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("r", "reload", "Reload"),
-        Binding("delete", "add_filter", "Add Filter", show=True),
-        Binding("ctrl+t", "toggle_tab", "Switch Tab"),
+        Binding("f5", "reload", "Reload", show=True),
+        Binding("ctrl+r", "reload", "Reload", show=False),
     ]
 
     watch_files = [
@@ -111,10 +231,16 @@ class FilterBrowser(App):
         # Use the with syntax which is the correct pattern for TabbedContent
         with TabbedContent(initial="files") as tabbed_content:
             with TabPane("Files", id="files"):
-                yield DataTable(id="files_table")
+                with Container():
+                    yield FilesTable(id="files_table")
 
-            with TabPane("Filters", id="filters"):
-                yield DataTable(id="filters_table")
+            with TabPane("Replace", id="replace"):
+                with Container():
+                    yield ReplaceTable(id="replace_table")
+
+            with TabPane("Ignore", id="ignore"):
+                with Container():
+                    yield IgnoreTable(id="ignore_table")
 
             with TabPane("Log", id="log"):
                 yield RichLog(highlight=True, markup=True, id="log_widget")
@@ -161,23 +287,27 @@ class FilterBrowser(App):
         files_table.cursor_type = "row"
         files_table.zebra_stripes = True  # Make it more visible
 
-        # Add a test row to see if table is visible
-        files_table.add_row("Test entry - if you see this, tables work!", "test")
+        # Set up ignore table
+        ignore_table = self.query_one("#ignore_table", DataTable)
+        ignore_table.add_column("Ignore Pattern", width=terminal_width - 10)
+        ignore_table.cursor_type = "row"
+        ignore_table.zebra_stripes = True
 
-        # Set up filters table
-        filters_table = self.query_one("#filters_table", DataTable)
-        filters_table.add_column("Filter Pattern", width=terminal_width - 10)
-        filters_table.cursor_type = "row"
-        filters_table.zebra_stripes = True
+        # Set up replace table
+        replace_table = self.query_one("#replace_table", DataTable)
+        replace_table.add_column("Find Pattern", width=int(terminal_width * 0.5))
+        replace_table.add_column("Replace With", width=int(terminal_width * 0.5) - 10)
+        replace_table.cursor_type = "row"
+        replace_table.zebra_stripes = True
 
         # Write to log after tables are set up
         self.write_log("Starting FilterBrowser...")
         self.write_log(f"Files table initialized: {path_width}x{sources_width}")
-        self.write_log("Filters table initialized")
+        self.write_log("Ignore and replace tables initialized")
 
         # Load initial data
         self.load_files_data()
-        self.load_filters_data()
+        self.load_filter_data()
 
         # Start checking for file changes
         self.set_interval(0.5, self.check_file_changes)
@@ -196,7 +326,7 @@ class FilterBrowser(App):
                         self.notify("Reloaded build_makefile.py")
                     elif watch_file.name == "filters.json":
                         self.write_log(f"Detected change in {watch_file.name}")
-                        self.load_filters_data()
+                        self.load_filter_data()
                         self.notify("Reloaded filters.json")
             except Exception as e:
                 self.write_log(f"Error checking {watch_file}: {e}", "error")
@@ -229,8 +359,10 @@ class FilterBrowser(App):
             if result.stderr:
                 self.write_log(f"Stderr: {result.stderr}", "warning")
 
-            targets = json.loads(result.stdout)
-            self.write_log(f"Parsed {len(targets)} targets from JSON", "info")
+            data = json.loads(result.stdout)
+            targets = data['targets']
+            filters_applied = data.get('filters_applied', 0)
+            self.write_log(f"Parsed {len(targets)} targets from JSON ({filters_applied} filters applied)", "info")
 
         except subprocess.CalledProcessError as e:
             self.write_log(f"Error running build_makefile.py: {e}", "error")
@@ -323,169 +455,300 @@ class FilterBrowser(App):
         else:
             self.write_log("No changes detected in entries", "debug")
 
-    def load_filters_data(self) -> None:
-        """Load filter patterns from filters.json"""
-        self.write_log("Loading filters...")
-        table = self.query_one("#filters_table", DataTable)
-        table.clear()
+    def load_filter_data(self) -> None:
+        """Load filter configuration from filters.json"""
+        self.write_log("Loading filter data...")
+        
+        ignore_table = self.query_one("#ignore_table", DataTable)
+        replace_table = self.query_one("#replace_table", DataTable)
+        
+        ignore_table.clear()
+        replace_table.clear()
 
         try:
-            with open("./scripts/filters.json", "r") as f:
-                filters = json.load(f)
+            filter_data = load_filters()
+            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
+            replace_patterns = filter_data.get("files", {}).get("replace", [])
 
-            self.write_log(f"Loaded {len(filters)} filters", "info")
+            self.write_log(f"Loaded {len(ignore_patterns)} ignore patterns, {len(replace_patterns)} replace patterns", "info")
 
-            for pattern in filters:
-                table.add_row(pattern, key=pattern)
+            # Load ignore patterns
+            for pattern in ignore_patterns:
+                ignore_table.add_row(pattern, key=pattern)
 
-            if not filters:
-                table.add_row("(No filters - press DEL on a file to add)", key="_empty")
+            # Load replace patterns
+            for find_pattern, replace_with in replace_patterns:
+                replace_table.add_row(find_pattern, replace_with, key=f"{find_pattern}|{replace_with}")
+
         except Exception as e:
-            self.write_log(f"Error loading filters: {e}", "error")
-            table.add_row(f"Error loading filters: {e}", key="_error")
+            self.write_log(f"Error loading filter data: {e}", "error")
+            ignore_table.add_row(f"Error loading filters: {e}", key="_error")
+            replace_table.add_row(f"Error loading filters: {e}", "", key="_error")
 
-    def action_add_filter(self) -> None:
-        """Add a filter based on selected file"""
-        # Check which tab is active
+    def action_ignore_filter(self) -> None:
+        """Handle ignore filter action based on active tab"""
         tabbed_content = self.query_one(TabbedContent)
 
         if tabbed_content.active == "files":
-            # Add filter from selected file
+            # Add ignore filter from selected file
             table = self.query_one("#files_table", DataTable)
             if table.row_count == 0 or table.cursor_row is None:
                 return
 
-            # Get the row key which should be the plain norm_key
             try:
-                row_data = table.get_row_at(table.cursor_row)
-                # The key is stored when we add the row, not the display text
-                row_key = table.coordinate_to_cell_key(
-                    (table.cursor_row, 0)
-                ).row_key.value
-
-                if row_key and row_key != "_empty":
-                    # Create regex-safe version
+                row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+                if row_key:
                     safe_pattern = re.escape(str(row_key))
                     self.push_screen(
-                        FilterEditModal(safe_pattern, "Add Filter"),
-                        self._add_filter_callback,
+                        FilterEditModal(safe_pattern, "Add Ignore Pattern"),
+                        self._add_ignore_callback,
                     )
             except Exception as e:
                 self.write_log(f"Error getting row key: {e}", "error")
 
-        elif tabbed_content.active == "filters":
-            # Edit or delete selected filter
-            table = self.query_one("#filters_table", DataTable)
+        elif tabbed_content.active == "ignore":
+            # Delete selected ignore pattern
+            table = self.query_one("#ignore_table", DataTable)
+            if table.row_count == 0 or table.cursor_row is None:
+                return
+            
+            try:
+                row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+                if row_key:
+                    self._remove_ignore_pattern(str(row_key))
+            except Exception as e:
+                self.write_log(f"Error getting ignore pattern: {e}", "error")
+
+        elif tabbed_content.active == "replace":
+            # Delete selected replace pattern
+            table = self.query_one("#replace_table", DataTable)
+            if table.row_count == 0 or table.cursor_row is None:
+                return
+            
+            try:
+                row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+                if row_key and "|" in row_key:
+                    find_pattern, replace_with = row_key.split("|", 1)
+                    self._remove_replace_pattern(find_pattern, replace_with)
+            except Exception as e:
+                self.write_log(f"Error getting replace pattern: {e}", "error")
+
+    def action_replace_filter(self) -> None:
+        """Handle replace filter action"""
+        tabbed_content = self.query_one(TabbedContent)
+
+        if tabbed_content.active == "files":
+            # Add replace filter from selected file
+            table = self.query_one("#files_table", DataTable)
             if table.row_count == 0 or table.cursor_row is None:
                 return
 
-            row = table.get_row_at(table.cursor_row)
-            if (
-                row
-                and len(row) > 0
-                and row[0] != "(No filters - press DEL on a file to add)"
-            ):
-                # Remove the filter
-                self._remove_filter(str(row[0]))
+            try:
+                row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+                if row_key:
+                    safe_pattern = re.escape(str(row_key))
+                    self.push_screen(
+                        ReplaceEditModal(safe_pattern, ""),
+                        self._add_replace_callback,
+                    )
+            except Exception as e:
+                self.write_log(f"Error getting row key: {e}", "error")
 
-    def _add_filter_callback(self, pattern: str) -> None:
-        """Callback for adding a filter"""
+    def _add_ignore_callback(self, pattern: str) -> None:
+        """Callback for adding an ignore pattern"""
         if not pattern:
             return
 
         try:
-            # Load current filters
-            with open("./scripts/filters.json", "r") as f:
-                filters = json.load(f)
+            filter_data = load_filters()
+            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
 
-            # Add new filter if not already present
-            if pattern not in filters:
-                filters.append(pattern)
+            if pattern not in ignore_patterns:
+                ignore_patterns.append(pattern)
+                filter_data["files"]["ignore"] = ignore_patterns
+                save_filters(filter_data)
 
-                # Save back
-                with open("./scripts/filters.json", "w") as f:
-                    json.dump(filters, f, indent=2)
-
-                self.notify(f"Added filter: {pattern}")
-                self.load_filters_data()
+                self.notify(f"Added ignore pattern: {pattern}")
+                self.load_filter_data()
                 self.load_files_data()  # Reload files to apply filter
         except Exception as e:
-            self.notify(f"Error adding filter: {e}", severity="error")
+            self.notify(f"Error adding ignore pattern: {e}", severity="error")
 
-    def _remove_filter(self, pattern: str) -> None:
-        """Remove a filter"""
+    def _add_replace_callback(self, result) -> None:
+        """Callback for adding a replace pattern"""
+        if not result or len(result) != 2:
+            return
+
+        find_pattern, replace_with = result
+        if not find_pattern:
+            return
+
         try:
-            # Load current filters
-            with open("./scripts/filters.json", "r") as f:
-                filters = json.load(f)
+            filter_data = load_filters()
+            replace_patterns = filter_data.get("files", {}).get("replace", [])
 
-            # Remove filter
-            if pattern in filters:
-                filters.remove(pattern)
+            new_pattern = [find_pattern, replace_with]
+            if new_pattern not in replace_patterns:
+                replace_patterns.append(new_pattern)
+                filter_data["files"]["replace"] = replace_patterns
+                save_filters(filter_data)
 
-                # Save back
-                with open("./scripts/filters.json", "w") as f:
-                    json.dump(filters, f, indent=2)
+                self.notify(f"Added replace pattern: {find_pattern} → {replace_with}")
+                self.load_filter_data()
+                self.load_files_data()  # Reload files to apply filter
+        except Exception as e:
+            self.notify(f"Error adding replace pattern: {e}", severity="error")
 
-                self.notify(f"Removed filter: {pattern}")
-                self.load_filters_data()
+    def _remove_ignore_pattern(self, pattern: str) -> None:
+        """Remove an ignore pattern"""
+        try:
+            filter_data = load_filters()
+            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
+
+            if pattern in ignore_patterns:
+                ignore_patterns.remove(pattern)
+                filter_data["files"]["ignore"] = ignore_patterns
+                save_filters(filter_data)
+
+                self.notify(f"Removed ignore pattern: {pattern}")
+                self.load_filter_data()
                 self.load_files_data()  # Reload files to update
         except Exception as e:
-            self.notify(f"Error removing filter: {e}", severity="error")
+            self.notify(f"Error removing ignore pattern: {e}", severity="error")
 
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """Handle row selection in filters table for editing"""
-        if event.data_table.id == "filters_table":
-            row = event.data_table.get_row_at(event.cursor_row)
-            if (
-                row
-                and len(row) > 0
-                and row[0] != "(No filters - press DEL on a file to add)"
-            ):
-                # Edit the filter
-                pattern = str(row[0])
+    def _remove_replace_pattern(self, find_pattern: str, replace_with: str) -> None:
+        """Remove a replace pattern"""
+        try:
+            filter_data = load_filters()
+            replace_patterns = filter_data.get("files", {}).get("replace", [])
+
+            pattern_to_remove = [find_pattern, replace_with]
+            if pattern_to_remove in replace_patterns:
+                replace_patterns.remove(pattern_to_remove)
+                filter_data["files"]["replace"] = replace_patterns
+                save_filters(filter_data)
+
+                self.notify(f"Removed replace pattern: {find_pattern} → {replace_with}")
+                self.load_filter_data()
+                self.load_files_data()  # Reload files to update
+        except Exception as e:
+            self.notify(f"Error removing replace pattern: {e}", severity="error")
+
+    def action_delete_ignore_pattern(self) -> None:
+        """Delete selected ignore pattern"""
+        table = self.query_one("#ignore_table", IgnoreTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return
+        
+        try:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            if row_key:
+                self._remove_ignore_pattern(str(row_key))
+        except Exception as e:
+            self.write_log(f"Error getting ignore pattern: {e}", "error")
+
+    def action_edit_ignore_pattern(self) -> None:
+        """Edit selected ignore pattern"""
+        table = self.query_one("#ignore_table", IgnoreTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return
+        
+        try:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            if row_key:
+                pattern = str(row_key)
                 self.push_screen(
-                    FilterEditModal(pattern, "Edit Filter"),
-                    lambda new_pattern: self._edit_filter(pattern, new_pattern),
+                    FilterEditModal(pattern, "Edit Ignore Pattern"),
+                    lambda new_pattern: self._edit_ignore_pattern(pattern, new_pattern),
                 )
+        except Exception as e:
+            self.write_log(f"Error getting ignore pattern: {e}", "error")
 
-    def _edit_filter(self, old_pattern: str, new_pattern: str) -> None:
-        """Edit an existing filter"""
+    def action_delete_replace_pattern(self) -> None:
+        """Delete selected replace pattern"""
+        table = self.query_one("#replace_table", ReplaceTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return
+        
+        try:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            if row_key and "|" in row_key:
+                find_pattern, replace_with = row_key.split("|", 1)
+                self._remove_replace_pattern(find_pattern, replace_with)
+        except Exception as e:
+            self.write_log(f"Error getting replace pattern: {e}", "error")
+
+    def action_edit_replace_pattern(self) -> None:
+        """Edit selected replace pattern"""
+        table = self.query_one("#replace_table", ReplaceTable)
+        if table.row_count == 0 or table.cursor_row is None:
+            return
+        
+        try:
+            row_key = table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            if row_key and "|" in row_key:
+                find_pattern, replace_with = row_key.split("|", 1)
+                self.push_screen(
+                    ReplaceEditModal(find_pattern, replace_with),
+                    lambda result: self._edit_replace_pattern(find_pattern, replace_with, result),
+                )
+        except Exception as e:
+            self.write_log(f"Error getting replace pattern: {e}", "error")
+
+    def _edit_ignore_pattern(self, old_pattern: str, new_pattern: str) -> None:
+        """Edit an ignore pattern"""
         if not new_pattern or old_pattern == new_pattern:
             return
 
         try:
-            # Load current filters
-            with open("./scripts/filters.json", "r") as f:
-                filters = json.load(f)
+            filter_data = load_filters()
+            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
 
-            # Replace old with new
-            if old_pattern in filters:
-                idx = filters.index(old_pattern)
-                filters[idx] = new_pattern
+            if old_pattern in ignore_patterns:
+                idx = ignore_patterns.index(old_pattern)
+                ignore_patterns[idx] = new_pattern
+                filter_data["files"]["ignore"] = ignore_patterns
+                save_filters(filter_data)
 
-                # Save back
-                with open("./scripts/filters.json", "w") as f:
-                    json.dump(filters, f, indent=2)
-
-                self.notify(f"Updated filter: {old_pattern} → {new_pattern}")
-                self.load_filters_data()
+                self.notify(f"Updated ignore pattern: {old_pattern} → {new_pattern}")
+                self.load_filter_data()
                 self.load_files_data()
         except Exception as e:
-            self.notify(f"Error editing filter: {e}", severity="error")
+            self.notify(f"Error editing ignore pattern: {e}", severity="error")
 
-    def action_toggle_tab(self) -> None:
-        """Toggle between tabs"""
-        tabbed_content = self.query_one(TabbedContent)
-        if tabbed_content.active == "files":
-            tabbed_content.active = "filters"
-        else:
-            tabbed_content.active = "files"
+    def _edit_replace_pattern(self, old_find: str, old_replace: str, result) -> None:
+        """Edit a replace pattern"""
+        if not result or len(result) != 2:
+            return
+
+        new_find, new_replace = result
+        if not new_find:
+            return
+
+        if old_find == new_find and old_replace == new_replace:
+            return
+
+        try:
+            filter_data = load_filters()
+            replace_patterns = filter_data.get("files", {}).get("replace", [])
+
+            old_pattern = [old_find, old_replace]
+            if old_pattern in replace_patterns:
+                idx = replace_patterns.index(old_pattern)
+                replace_patterns[idx] = [new_find, new_replace]
+                filter_data["files"]["replace"] = replace_patterns
+                save_filters(filter_data)
+
+                self.notify(f"Updated replace pattern: {old_find}→{old_replace} to {new_find}→{new_replace}")
+                self.load_filter_data()
+                self.load_files_data()
+        except Exception as e:
+            self.notify(f"Error editing replace pattern: {e}", severity="error")
 
     def action_reload(self) -> None:
         """Manual reload"""
         self.load_files_data()
-        self.load_filters_data()
+        self.load_filter_data()
 
     def action_quit(self) -> None:
         """Quit the application"""

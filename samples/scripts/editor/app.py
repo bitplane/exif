@@ -7,32 +7,95 @@ and browsing sample data files.
 """
 
 import re
+import json
+import logging
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 from textual.binding import Binding
 
-from watch import FileWatcher
-from log import LogWidget  
-from images import ImagesWidget
-from images.modals import IgnoreFilterModal, ReplaceFilterModal
-from filters import load_filters, save_filters
+from files.watcher import FileWatcher
+from files.filters import load, save, create_filter, FILTER_TYPES
+from ui.log_tab import LogWidget, setup_logging
+from ui.main import MainWidget
+from ui.filters_modal import FilterModal, FilterListModal
+
+# Setup module logger
+logger = logging.getLogger("editor")
 
 
 class EditorApp(App):
     """EXIF Sample Data Editor Application"""
+    
+    def on_exception(self, error: Exception) -> None:
+        """Handle all uncaught exceptions"""
+        logger.exception(f"Uncaught exception: {error}")
+        self.notify(f"Error: {error}", severity="error")
 
     CSS = """
+    /* Compact spacing */
+    TabbedContent {
+        padding: 0;
+        margin: 0;
+    }
+    
+    TabbedContent Tabs {
+        padding: 0;
+        margin: 0;
+        height: 1;  /* Ultra compact */
+    }
+    
+    TabbedContent Tab {
+        padding: 0 1;  /* Minimal horizontal padding */
+        margin: 0;
+    }
+    
+    /* Style active tab when focused */
+    TabbedContent:focus Tab.-active,
+    TabbedContent Tabs:focus Tab.-active {
+        text-style: bold reverse;
+    }
+    
+    TabbedContent TabPane {
+        padding: 0;
+        margin: 0;
+    }
+    
+    TabbedContent ContentSwitcher {
+        padding: 0;
+        margin: 0;
+    }
+    
+    Container {
+        padding: 0;
+        margin: 0;
+    }
+    
+    /* DataTable styling */
     DataTable {
         height: 100%;
-        border: solid $accent;
+        width: 100%;
+        border: solid #444444;
+        margin: 0;
+        padding: 0;
     }
     DataTable > .datatable--header {
         text-style: bold;
     }
+    
+    /* Log styling */
     RichLog {
-        border: solid $primary;
+        border: solid #444444;
+        margin: 0;
+    }
+    
+    Header {
+        margin: 0;
+    }
+    
+    Footer {
+        margin: 0;
     }
     """
 
@@ -40,21 +103,25 @@ class EditorApp(App):
         Binding("q", "quit", "Quit"),
         Binding("f5", "reload", "Reload", show=True),
         Binding("ctrl+r", "reload", "Reload", show=False),
+        Binding("ctrl+n", "new_filter", "New Filter", show=True),
+        Binding("d", "delete_filter", "Delete Filter", show=False),
+        Binding("i", "ignore_filter", "Ignore Filter", show=False),
+        Binding("e", "edit_filter", "Edit Filter", show=False),
     ]
 
     def __init__(self):
         super().__init__()
         self.file_watcher = FileWatcher()
         self.log_widget = None
-        self.images_widget = None
+        self.main_widget = None
 
     def compose(self) -> ComposeResult:
         yield Header()
 
-        with TabbedContent(initial="images") as tabbed_content:
-            with TabPane("Images", id="images"):
-                self.images_widget = ImagesWidget(self)
-                yield self.images_widget
+        with TabbedContent(initial="main") as tabbed_content:
+            with TabPane("Main", id="main"):
+                self.main_widget = MainWidget(self)
+                yield self.main_widget
 
             with TabPane("Log", id="log"):
                 self.log_widget = LogWidget()
@@ -70,235 +137,197 @@ class EditorApp(App):
 
     def on_mount(self) -> None:
         """Initialize the application"""
-        self.write_log("Starting EXIF Sample Data Editor...")
-
-        # Set up file watching
-        build_makefile_path = Path(__file__).parent.parent / "build_makefile.py"
-        filters_path = Path(__file__).parent.parent / "filters.json"
+        # Setup logging with the log widget
+        setup_logging(self.log_widget)
         
-        self.file_watcher.watch_file(build_makefile_path, self._on_build_makefile_changed)
-        self.file_watcher.watch_file(filters_path, self._on_filters_changed)
+        logger.info("Starting EXIF Sample Data Editor...")
 
         # Set up tables
         terminal_width = self.size.width
-        path_width, sources_width = self.images_widget.setup_tables(terminal_width)
-        self.write_log(f"Tables initialized: {path_width}x{sources_width}")
+        path_width, sources_width = self.main_widget.setup_tables(terminal_width)
+        logger.info(f"Tables initialized: {path_width}x{sources_width}")
 
         # Load initial data
         self.load_all_data()
 
-        # Start file watching
-        self.set_interval(0.5, self.file_watcher.check_changes)
-        self.write_log("File watching started")
-
-    def _on_build_makefile_changed(self, file_path: Path) -> None:
-        """Handle build_makefile.py changes"""
-        self.write_log(f"Detected change in {file_path.name}")
-        self.images_widget.load_files_data(self.write_log)
-        self.notify("Reloaded build_makefile.py")
-
-    def _on_filters_changed(self, file_path: Path) -> None:
-        """Handle filters.json changes"""
-        self.write_log(f"Detected change in {file_path.name}")
-        filter_data = load_filters()
-        self.images_widget.load_filter_data(filter_data, self.write_log)
-        self.notify("Reloaded filters.json")
-
     def load_all_data(self) -> None:
         """Load all data"""
-        self.images_widget.load_files_data(self.write_log)
-        filter_data = load_filters()
-        self.images_widget.load_filter_data(filter_data, self.write_log)
+        self.main_widget.load_files_data()
+        
+        # Load filters from disk
+        filters_path = Path(__file__).parent.parent / "filters.json"
+        try:
+            with open(filters_path, "r") as f:
+                filter_data = json.load(f)
+                logger.debug(f"Loaded filter data: {filter_data}")
+        except Exception as e:
+            logger.error(f"Error loading filters.json: {e}")
+            filter_data = {"files": {"ignore": [], "edit": []}}
+        
+        self.main_widget.load_filter_data(filter_data)
+    
+    def _save_filters(self, filter_objects):
+        """Save filters to disk"""
+        filters_path = Path(__file__).parent.parent / "filters.json"
+        filter_data = save(filter_objects)
+        
+        temp_file = filters_path.with_suffix(".json.tmp")
+        with open(temp_file, "w") as f:
+            json.dump(filter_data, f, indent=2)
+        temp_file.rename(filters_path)
 
     # Action methods called by table widgets
     def action_ignore_filter(self) -> None:
         """Handle ignore filter action"""
-        active_tab = self.images_widget.get_active_tab()
+        active_tab = self.main_widget.get_active_tab()
 
         if active_tab == "files":
-            # Add ignore filter from selected file
-            selected_file = self.images_widget.get_selected_file()
+            # Add ignore filter from selected file using generic modal
+            selected_file = self.main_widget.get_selected_file()
             if selected_file:
                 safe_pattern = re.escape(selected_file)
                 self.push_screen(
-                    IgnoreFilterModal(safe_pattern, "Add Ignore Pattern"),
-                    self._add_ignore_callback,
+                    FilterModal(
+                        "ignore", 
+                        "Add Ignore Filter",
+                        {"pattern": safe_pattern}
+                    ),
+                    lambda values: self._add_filter_simple("ignore", values),
                 )
 
-    def action_replace_filter(self) -> None:
-        """Handle replace filter action"""
-        active_tab = self.images_widget.get_active_tab()
+    def action_edit_filter(self) -> None:
+        """Handle edit filter action (from 'e' key)"""
+        active_tab = self.main_widget.get_active_tab()
 
         if active_tab == "files":
-            # Add replace filter from selected file
-            selected_file = self.images_widget.get_selected_file()
+            # Add edit filter from selected file using generic modal
+            selected_file = self.main_widget.get_selected_file()
             if selected_file:
                 safe_pattern = re.escape(selected_file)
                 self.push_screen(
-                    ReplaceFilterModal(safe_pattern, ""),
-                    self._add_replace_callback,
+                    FilterModal(
+                        "edit",
+                        "Add Edit Filter",
+                        {"find": safe_pattern, "replace": ""}
+                    ),
+                    lambda values: self._add_filter_simple("edit", values),
                 )
 
-    def action_delete_ignore_pattern(self) -> None:
-        """Delete selected ignore pattern"""
-        pattern = self.images_widget.get_selected_ignore_pattern()
-        if pattern:
-            self._remove_ignore_pattern(pattern)
+    def action_delete_filter(self) -> None:
+        """Delete selected filter"""
+        filter_obj, index = self.main_widget.get_selected_filter()
+        if filter_obj is not None:
+            self._remove_filter_at_index(index)
 
-    def action_edit_ignore_pattern(self) -> None:
-        """Edit selected ignore pattern"""
-        pattern = self.images_widget.get_selected_ignore_pattern()
-        if pattern:
-            self.push_screen(
-                IgnoreFilterModal(pattern, "Edit Ignore Pattern"),
-                lambda new_pattern: self._edit_ignore_pattern(pattern, new_pattern),
-            )
-
-    def action_delete_replace_pattern(self) -> None:
-        """Delete selected replace pattern"""
-        pattern_tuple = self.images_widget.get_selected_replace_pattern()
-        if pattern_tuple:
-            find_pattern, replace_with = pattern_tuple
-            self._remove_replace_pattern(find_pattern, replace_with)
-
-    def action_edit_replace_pattern(self) -> None:
-        """Edit selected replace pattern"""
-        pattern_tuple = self.images_widget.get_selected_replace_pattern()
-        if pattern_tuple:
-            find_pattern, replace_with = pattern_tuple
-            self.push_screen(
-                ReplaceFilterModal(find_pattern, replace_with),
-                lambda result: self._edit_replace_pattern(find_pattern, replace_with, result),
-            )
+    def action_edit_filter(self) -> None:
+        """Edit selected filter"""
+        filter_obj, index = self.main_widget.get_selected_filter()
+        if filter_obj is not None:
+            # Get filter type dynamically
+            filter_type = None
+            initial_values = {}
+            
+            # Find which type this filter is
+            for fname, fclass in FILTER_TYPES.items():
+                if isinstance(filter_obj, fclass):
+                    filter_type = fname
+                    # Get current values for each parameter
+                    for param_name, _, _ in fclass.PARAMETERS:
+                        if hasattr(filter_obj, param_name):
+                            initial_values[param_name] = getattr(filter_obj, param_name)
+                    break
+            
+            if filter_type:
+                self.push_screen(
+                    FilterModal(filter_type, f"Edit {filter_type.title()} Filter", initial_values),
+                    lambda values: self._edit_filter_at_index(index, filter_type, values),
+                )
 
     # Filter management callbacks
-    def _add_ignore_callback(self, pattern: str) -> None:
-        """Callback for adding an ignore pattern"""
-        if not pattern:
+    def _add_filter_simple(self, filter_type: str, values: dict) -> None:
+        """Simple callback for adding a filter by type"""
+        if not values:
             return
 
         try:
-            filter_data = load_filters()
-            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
-
-            if pattern not in ignore_patterns:
-                ignore_patterns.append(pattern)
-                filter_data["files"]["ignore"] = ignore_patterns
-                save_filters(filter_data)
-
-                self.notify(f"Added ignore pattern: {pattern}")
-                self.load_all_data()
+            logger.debug(f"Adding {filter_type} filter with values: {values}")
+            
+            filter_class = FILTER_TYPES.get(filter_type)
+            if not filter_class:
+                logger.warning(f"Unknown filter type: {filter_type}")
+                return
+            
+            # Create filter with parameter values in order
+            param_values = [values.get(p[0]) for p in filter_class.PARAMETERS]
+            new_filter = create_filter(filter_type, *param_values)
+            logger.info(f"Created {filter_type} filter: {new_filter}")
+            
+            # Add through the filters widget
+            filters_widget = self.main_widget.get_filters_widget()
+            filters_widget.add_filter(new_filter)
+            
+            # Save to disk
+            self._save_filters(filters_widget.filter_objects)
+            self.notify(f"Added {new_filter}")
+            
         except Exception as e:
-            self.notify(f"Error adding ignore pattern: {e}", severity="error")
+            logger.exception(f"Error adding filter: {e}")
+            self.notify(f"Error adding filter: {e}", severity="error")
 
-    def _add_replace_callback(self, result) -> None:
-        """Callback for adding a replace pattern"""
-        if not result or len(result) != 2:
-            return
-
-        find_pattern, replace_with = result
-        if not find_pattern:
-            return
-
+    def _remove_filter_at_index(self, index: int) -> None:
+        """Remove a filter by index"""
         try:
-            filter_data = load_filters()
-            replace_patterns = filter_data.get("files", {}).get("replace", [])
-
-            new_pattern = [find_pattern, replace_with]
-            if new_pattern not in replace_patterns:
-                replace_patterns.append(new_pattern)
-                filter_data["files"]["replace"] = replace_patterns
-                save_filters(filter_data)
-
-                self.notify(f"Added replace pattern: {find_pattern} → {replace_with}")
-                self.load_all_data()
+            filters_widget = self.main_widget.get_filters_widget()
+            removed = filters_widget.remove_filter_at(index)
+            if removed:
+                self._save_filters(filters_widget.filter_objects)
+                self.notify(f"Removed {removed}")
         except Exception as e:
-            self.notify(f"Error adding replace pattern: {e}", severity="error")
+            self.notify(f"Error removing filter: {e}", severity="error")
 
-    def _remove_ignore_pattern(self, pattern: str) -> None:
-        """Remove an ignore pattern"""
-        try:
-            filter_data = load_filters()
-            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
-
-            if pattern in ignore_patterns:
-                ignore_patterns.remove(pattern)
-                filter_data["files"]["ignore"] = ignore_patterns
-                save_filters(filter_data)
-
-                self.notify(f"Removed ignore pattern: {pattern}")
-                self.load_all_data()
-        except Exception as e:
-            self.notify(f"Error removing ignore pattern: {e}", severity="error")
-
-    def _remove_replace_pattern(self, find_pattern: str, replace_with: str) -> None:
-        """Remove a replace pattern"""
-        try:
-            filter_data = load_filters()
-            replace_patterns = filter_data.get("files", {}).get("replace", [])
-
-            pattern_to_remove = [find_pattern, replace_with]
-            if pattern_to_remove in replace_patterns:
-                replace_patterns.remove(pattern_to_remove)
-                filter_data["files"]["replace"] = replace_patterns
-                save_filters(filter_data)
-
-                self.notify(f"Removed replace pattern: {find_pattern} → {replace_with}")
-                self.load_all_data()
-        except Exception as e:
-            self.notify(f"Error removing replace pattern: {e}", severity="error")
-
-    def _edit_ignore_pattern(self, old_pattern: str, new_pattern: str) -> None:
-        """Edit an ignore pattern"""
-        if not new_pattern or old_pattern == new_pattern:
+    def _edit_filter_at_index(self, index: int, filter_type: str, values: dict) -> None:
+        """Edit a filter at index"""
+        if not values:
             return
-
-        try:
-            filter_data = load_filters()
-            ignore_patterns = filter_data.get("files", {}).get("ignore", [])
-
-            if old_pattern in ignore_patterns:
-                idx = ignore_patterns.index(old_pattern)
-                ignore_patterns[idx] = new_pattern
-                filter_data["files"]["ignore"] = ignore_patterns
-                save_filters(filter_data)
-
-                self.notify(f"Updated ignore pattern: {old_pattern} → {new_pattern}")
-                self.load_all_data()
-        except Exception as e:
-            self.notify(f"Error editing ignore pattern: {e}", severity="error")
-
-    def _edit_replace_pattern(self, old_find: str, old_replace: str, result) -> None:
-        """Edit a replace pattern"""
-        if not result or len(result) != 2:
+            
+        filters_widget = self.main_widget.get_filters_widget()
+        
+        # Create new filter object
+        filter_class = FILTER_TYPES.get(filter_type)
+        if not filter_class:
+            logger.error(f"Unknown filter type: {filter_type}")
             return
-
-        new_find, new_replace = result
-        if not new_find:
+        
+        # Create filter with parameter values
+        param_values = [values.get(p[0]) for p in filter_class.PARAMETERS]
+        new_filter = create_filter(filter_type, *param_values)
+        
+        # Check if filter actually changed
+        old_filter = filters_widget.filter_objects[index] if index < len(filters_widget.filter_objects) else None
+        if old_filter and old_filter.to_dict() == new_filter.to_dict():
+            logger.debug("Filter unchanged, skipping update")
+            self.notify("Filter unchanged")
             return
-
-        if old_find == new_find and old_replace == new_replace:
-            return
-
-        try:
-            filter_data = load_filters()
-            replace_patterns = filter_data.get("files", {}).get("replace", [])
-
-            old_pattern = [old_find, old_replace]
-            if old_pattern in replace_patterns:
-                idx = replace_patterns.index(old_pattern)
-                replace_patterns[idx] = [new_find, new_replace]
-                filter_data["files"]["replace"] = replace_patterns
-                save_filters(filter_data)
-
-                self.notify(f"Updated replace pattern: {old_find}→{old_replace} to {new_find}→{new_replace}")
-                self.load_all_data()
-        except Exception as e:
-            self.notify(f"Error editing replace pattern: {e}", severity="error")
+        
+        # Update in widget
+        if filters_widget.update_filter_at(index, new_filter):
+            self._save_filters(filters_widget.filter_objects)
+            self.notify(f"Updated filter: {new_filter}")
 
     def action_reload(self) -> None:
         """Manual reload"""
         self.load_all_data()
+
+    def action_new_filter(self) -> None:
+        """Show filter type selection modal"""
+        def handle_filter_type(filter_type):
+            if filter_type:
+                self.push_screen(
+                    FilterModal(filter_type, f"Add {filter_type.title()} Filter"),
+                    lambda values: self._add_filter_simple(filter_type, values)
+                )
+        
+        self.push_screen(FilterListModal(), handle_filter_type)
 
     def action_quit(self) -> None:
         """Quit the application"""

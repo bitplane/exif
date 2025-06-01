@@ -7,105 +7,67 @@ Order is determined by command line argument order
 
 import sys
 import os
-import re
 import json
 import argparse
 from collections import OrderedDict
 
+# Add editor modules to path
+editor_path = os.path.join(os.path.dirname(__file__), 'editor')
+sys.path.insert(0, editor_path)
+
+# Import using absolute paths
+import images.file_list
+import filters.base
+
+FileList = images.file_list.FileList
+load_filters_from_json = filters.base.load_filters_from_json
+
 # Load filters on startup
-IGNORE_FILTERS = []
-REPLACE_FILTERS = []
 FILTERS_FILE = os.path.join(os.path.dirname(__file__), 'filters.json')
+FILTERS = []
 if os.path.exists(FILTERS_FILE):
     try:
         with open(FILTERS_FILE, 'r') as f:
             filter_data = json.load(f)
-            IGNORE_FILTERS = filter_data.get("files", {}).get("ignore", [])
-            REPLACE_FILTERS = filter_data.get("files", {}).get("replace", [])
+            FILTERS = load_filters_from_json(filter_data)
     except Exception:
-        IGNORE_FILTERS = []
-        REPLACE_FILTERS = []
+        FILTERS = []
 
-def normalize_path(source_name, path):
-    """
-    Normalize a path for deduplication.
-    Returns (normalized_path, applied_filters) tuple
-    """ 
-    applied_filters = []
-    current_path = path
-    
-    # Apply replacements first (can cascade)
-    for find_pattern, replace_with in REPLACE_FILTERS:
-        try:
-            new_path = re.sub(find_pattern, replace_with, current_path)
-            if new_path != current_path:
-                applied_filters.append(("replace", find_pattern, replace_with))
-                current_path = new_path
-        except re.error:
-            pass  # Invalid regex, skip
-    
-    # Then check ignore filters on the final result
-    for filter_pattern in IGNORE_FILTERS:
-        try:
-            if re.search(filter_pattern, current_path):
-                applied_filters.append(("ignore", filter_pattern))
-                return "", applied_filters  # Filtered out
-        except re.error:
-            pass  # Invalid regex, skip
-    
-    return current_path, applied_filters
-
-def parse_params_file(params_file, source_name):
-    """Parse a params file and return list of (target, command) tuples"""
-    rules = []
-    
-    if not os.path.exists(params_file):
-        return rules
-    
-    with open(params_file, 'r') as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Split into filename and args
-            parts = line.split(' ', 1)
-            if len(parts) < 2:
-                continue
-            
-            filename, args = parts
-            target = f"data/{filename}"
-            
-            # Build the full command
-            command = f"./scripts/{source_name}/download.sh $@ {args}"
-            
-            rules.append((target, command, source_name))
-    
-    return rules
 
 def generate_targets_dict(downloaders):
     """Generate the targets dictionary from downloaders list"""
-    # Use OrderedDict to maintain order while collecting all sources per target
+    # Create file list and load data
+    file_list = FileList()
+    file_list.load()
+    
+    # Apply filters
+    filtered_data = file_list.apply_filters(FILTERS)
+    
+    # Convert to old format for compatibility
     targets = OrderedDict()
     
-    # Collect all sources for each normalized target
-    for downloader in downloaders:
-        params_file = f".cache/{downloader}.params"
-        rules = parse_params_file(params_file, downloader)
+    for norm_key, sources in filtered_data.items():
+        if norm_key not in targets:
+            targets[norm_key] = []
         
-        for target, command, source in rules:
-            # Extract the path part after "data/"
-            path = target[5:] if target.startswith("data/") else target
-            norm_key, applied_filters = normalize_path(source, path)
+        for source_info in sources:
+            target = f"data/{norm_key}"
+            source = source_info["source"]
+            args = source_info["args"]
+            command = f"./scripts/{source}/download.sh $@ {args}"
             
-            # Skip if filtered out (falsey)
-            if not norm_key:
-                continue
+            # Convert applied_filters to old format
+            applied_filters = []
+            for f in source_info["applied_filters"]:
+                filter_type = f["type"]
+                if "Ignore:" in filter_type:
+                    # Extract pattern from "Ignore: pattern" format
+                    pattern = filter_type.split("Ignore: ", 1)[1]
+                    applied_filters.append(("ignore", pattern))
+                elif "Replace:" in filter_type:
+                    # For replace, we have from/to info
+                    applied_filters.append(("replace", f["from"], f["to"]))
             
-            # Collect all sources for this target
-            if norm_key not in targets:
-                targets[norm_key] = []
-
             targets[norm_key].append((target, command, source, applied_filters))
     
     return targets
@@ -124,19 +86,23 @@ def main():
         dump_data = {
             'targets': {},
             'filters': {
-                'ignore': IGNORE_FILTERS,
-                'replace': REPLACE_FILTERS
-            }
+                'ignore': [f.pattern for f in FILTERS if hasattr(f, 'pattern')],
+                'replace': [[f.find, f.replace] for f in FILTERS if hasattr(f, 'find')]
+            },
+            'filters_applied': 0
         }
+        total_filters_applied = 0
         for norm_key, sources in targets.items():
             source_list = []
             for target, command, source, applied_filters in sources:
+                total_filters_applied += len(applied_filters)
                 source_list.append({
                     'target': target,
                     'source': source,
                     'applied_filters': applied_filters
                 })
             dump_data['targets'][norm_key] = source_list
+        dump_data['filters_applied'] = total_filters_applied
         print(json.dumps(dump_data, indent=2))
         return
     

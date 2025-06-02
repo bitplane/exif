@@ -7,9 +7,12 @@ import time
 import logging
 from textual.widgets import DataTable
 from textual.binding import Binding
+
+
+from files.file_list import FileList
+from utils.decorators import timed
 from .table import VirtualDataTable
 from .file_data_provider import FileDataProvider
-from files.file_list import FileList
 
 logger = logging.getLogger("editor")
 
@@ -69,21 +72,11 @@ class FilesWidget:
     
     def refresh_display(self, table: FilesTable):
         """Refresh the table display without reloading from disk"""
-        start_time = time.time()
-        
         # FileList handles filtering internally
         self.file_list.refresh()
         
-        # The virtual table will handle loading data as needed
-        logger.info(f"Data refreshed: {len(self.file_list)} files")
-        
-        # Force a refresh by clearing version cache
-        table._last_version = -1
-        table.refresh()
-        
-        elapsed = time.time() - start_time
-        logger.info(f"Display refreshed in {elapsed:.3f}s")
-    
+        # Trigger background update
+        table.trigger_update()
     
     def get_selected_file(self, table: FilesTable):
         """Get the currently selected file path"""
@@ -95,7 +88,7 @@ class FilesWidget:
             return str(row_key) if row_key else None
         except Exception:
             return None
-    
+     
     def set_filters(self, filters):
         """Set the filter list"""
         self.file_list.set_filters(filters)

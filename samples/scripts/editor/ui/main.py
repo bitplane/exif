@@ -36,7 +36,7 @@ class MainWidget(Container):
         with TabbedContent(initial="files") as tabbed_content:
             with TabPane("Files", id="files"):
                 with Container():
-                    yield FilesTable(id="files_table")
+                    yield FilesTable(self.files_widget.data_provider, id="files_table")
             
             with TabPane("Filters", id="filters"):
                 with Container():
@@ -68,6 +68,10 @@ class MainWidget(Container):
         
         # Set filters on files widget
         self.files_widget.set_filters(filters)
+        
+        # Refresh files display with new filters
+        files_table = self.query_one("#files_table", FilesTable)
+        self.files_widget.refresh_display(files_table)
         
         # Load filters into the filters table
         filters_table = self.query_one("#filters_table", FiltersTable)

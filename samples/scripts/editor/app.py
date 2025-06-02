@@ -208,7 +208,7 @@ class EditorApp(App):
                     FilterModal(
                         "edit",
                         "Add Edit Filter",
-                        {"find": safe_pattern, "replace": ""}
+                        {"find": safe_pattern, "replacement": ""}
                     ),
                     lambda values: self._add_filter_simple("edit", values),
                 )

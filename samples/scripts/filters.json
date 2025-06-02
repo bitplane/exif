@@ -1,14 +1,13 @@
 {
   "files": {
     "ignore": [
-      "device/\\-\\-/\\-\\-\\.jpeg",
       "device/\\-/\\-\\.jpg",
       "device/\\._Laur/a_Y\\._Raga_Not\\.jpg",
       "device/\\-\\-/\\-\\-\\.tif",
       "device/\\-\\-/unknown\\.jpg",
-      "device/\\-\\-/\\-\\-\\.jpg",
       "device/\\-\\-/\\-\\-\\.jpeg",
-      "^device/\\._"
+      "^device/\\._",
+      "device/\\-SONY_RX10/unknown\\.jpg"
     ],
     "edit": [
       [

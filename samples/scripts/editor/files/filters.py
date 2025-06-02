@@ -66,7 +66,7 @@ class IgnoreFilter(Filter):
         return cls(data["pattern"])
     
     def __str__(self) -> str:
-        return f"Ignore: {self.pattern}"
+        return self.pattern
 
 
 class EditFilter(Filter):
@@ -74,12 +74,12 @@ class EditFilter(Filter):
     
     PARAMETERS = [
         ("find", str, "Pattern to find"),
-        ("replace", str, "Replacement text")
+        ("replacement", str, "Replacement text")
     ]
     
-    def __init__(self, find: str, replace: str):
+    def __init__(self, find: str, replacement: str):
         self.find = find
-        self.replace = replace
+        self.replacement = replacement
         try:
             self._compiled = re.compile(find)
         except re.error:
@@ -87,22 +87,22 @@ class EditFilter(Filter):
     
     def apply(self, path: str) -> str:
         if self._compiled:
-            return self._compiled.sub(self.replace, path)
+            return self._compiled.sub(self.replacement, path)
         return path
     
     def to_dict(self) -> Dict[str, Any]:
         return {
             "type": "edit",
             "find": self.find,
-            "replace": self.replace
+            "replacement": self.replacement
         }
     
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ReplaceFilter':
-        return cls(data["find"], data["replace"])
+    def from_dict(cls, data: Dict[str, Any]) -> 'EditFilter':
+        return cls(data["find"], data["replacement"])
     
     def __str__(self) -> str:
-        return f"Edit: {self.find} → {self.replace}"
+        return f"{self.find} → {self.replacement}"
 
 
 class FiltersChain(Filter):
@@ -172,10 +172,9 @@ def load_filters_from_json(data: Dict[str, Any]) -> List[Filter]:
     for pattern in files_data.get("ignore", []):
         filters.append(IgnoreFilter(pattern))
     
-    # Load edit patterns (check both new "edit" and legacy "replace" keys)
-    edit_patterns = files_data.get("edit", []) or files_data.get("replace", [])
-    for find, replace in edit_patterns:
-        filters.append(EditFilter(find, replace))
+    # Load edit patterns
+    for find, replacement in files_data.get("edit", []):
+        filters.append(EditFilter(find, replacement))
     
     return filters
 
@@ -183,19 +182,19 @@ def load_filters_from_json(data: Dict[str, Any]) -> List[Filter]:
 def save_filters_to_json(filters: List[Filter]) -> Dict[str, Any]:
     """Save filters to the JSON format used in filters.json"""
     ignore_patterns = []
-    replace_patterns = []
+    edit_patterns = []
     
     for filter_obj in filters:
         if isinstance(filter_obj, IgnoreFilter):
             ignore_patterns.append(filter_obj.pattern)
         elif isinstance(filter_obj, EditFilter):
-            replace_patterns.append([filter_obj.find, filter_obj.replace])
+            edit_patterns.append([filter_obj.find, filter_obj.replacement])
         # Skip chains for now - they're not in the current format
     
     return {
         "files": {
             "ignore": ignore_patterns,
-            "edit": replace_patterns
+            "edit": edit_patterns
         }
     }
 

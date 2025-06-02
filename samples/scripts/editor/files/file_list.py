@@ -24,6 +24,9 @@ class FileList:
         # Cached filtered data for table display
         self._filtered_data: List[Tuple[str, str, str]] = []  # (key, path, sources)
         self._needs_refresh = True
+        
+        # Version counter for cache invalidation
+        self._version = 0
     
     def load(self) -> None:
         """Load all file data from .params files"""
@@ -145,6 +148,7 @@ class FileList:
         """Update filters and mark for refresh"""
         self.filters = filters
         self._needs_refresh = True
+        self._version += 1
     
     def refresh(self):
         """Refresh filtered data for table display"""
@@ -161,6 +165,11 @@ class FileList:
             self._filtered_data.append((path, path, sources_str))
         
         self._needs_refresh = False
+        self._version += 1
+    
+    def get_version(self):
+        """Get current data version for cache invalidation"""
+        return self._version
     
     # Table interface methods
     def __len__(self):

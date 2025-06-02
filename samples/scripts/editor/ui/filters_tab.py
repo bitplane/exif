@@ -70,8 +70,8 @@ class FiltersTabWidget:
             # Colored type column
             colored_type = f"[{color}]{filter_type}[/]"
             
-            # Use the filter's string representation as-is
-            filter_desc = str(filter_obj)
+            # Escape Rich markup in filter description
+            filter_desc = str(filter_obj).replace("[", "\\[").replace("]", "\\]")
             
             table.add_row(colored_type, filter_desc, key=i)
         

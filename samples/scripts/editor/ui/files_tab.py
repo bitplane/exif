@@ -8,6 +8,7 @@ import logging
 from textual.widgets import DataTable
 from textual.binding import Binding
 from .table import VirtualDataTable
+from .file_data_provider import FileDataProvider
 from files.file_list import FileList
 
 logger = logging.getLogger("editor")
@@ -34,6 +35,7 @@ class FilesWidget:
     def __init__(self, editor_app):
         self.editor_app = editor_app
         self.file_list = FileList()
+        self.data_provider = FileDataProvider(self.file_list)
     
     def setup_table(self, table: FilesTable, terminal_width: int):
         """Initialize the files table"""
@@ -51,27 +53,19 @@ class FilesWidget:
         """Load file data and setup table"""
         logger.info("Loading files data...")
         
-        try:
-            # Load and refresh data
-            self.file_list.load()
-            logger.debug(f"Loaded {self.file_list.get_file_count()} raw files")
-            
-            downloaders = self.file_list.get_downloaders()
-            if not downloaders:
-                logger.warning("No .params files found in .cache/")
-                table.clear()
-                table.add_row("No .params files found in .cache/", "")
-                return
-            
-            logger.debug(f"Found downloaders: {downloaders}")
-            
-            # Refresh display with current filters
-            self.refresh_display(table)
-            
-        except Exception as e:
-            logger.error(f"Error loading file data: {e}")
-            table.clear()
-            table.add_row(f"Error loading file data: {e}", "")
+        # Load and refresh data
+        self.file_list.load()
+        logger.debug(f"Loaded {self.file_list.get_file_count()} raw files")
+        
+        downloaders = self.file_list.get_downloaders()
+        if not downloaders:
+            logger.warning("No .params files found in .cache/")
+            return
+        
+        logger.debug(f"Found downloaders: {downloaders}")
+        
+        # Refresh display with current filters
+        self.refresh_display(table)
     
     def refresh_display(self, table: FilesTable):
         """Refresh the table display without reloading from disk"""
@@ -80,32 +74,16 @@ class FilesWidget:
         # FileList handles filtering internally
         self.file_list.refresh()
         
-        # Terminal colors
-        good_colors = [
-            "red", "green", "yellow", "blue", "magenta", "cyan",
-            "bright_red", "bright_green", "bright_yellow", 
-            "bright_blue", "bright_magenta", "bright_cyan",
-        ]
+        # The virtual table will handle loading data as needed
+        logger.info(f"Data refreshed: {len(self.file_list)} files")
         
-        # Build display data with colors
-        virtual_data = []
-        for i in range(len(self.file_list)):
-            key, path, sources_str = self.file_list[i]
-            
-            # Color based on first source
-            primary_source = sources_str.split(", ")[0] if sources_str else "unknown"
-            hash_value = int(hashlib.md5(primary_source.encode()).hexdigest()[:8], 16)
-            color_index = hash_value % len(good_colors)
-            source_color = good_colors[color_index]
-            
-            colored_sources = f"[{source_color}]{sources_str}[/]"
-            virtual_data.append((key, path, colored_sources))
-        
-        # Update table
-        table.set_virtual_data(virtual_data)
+        # Force a refresh by clearing version cache
+        table._last_version = -1
+        table.refresh()
         
         elapsed = time.time() - start_time
-        logger.info(f"Display refreshed: {len(virtual_data)} files in {elapsed:.3f}s")
+        logger.info(f"Display refreshed in {elapsed:.3f}s")
+    
     
     def get_selected_file(self, table: FilesTable):
         """Get the currently selected file path"""
